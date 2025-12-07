@@ -85,6 +85,11 @@ public class FunnyCalculatorBuilder {
         return this;
     }
 
+    public FunnyCalculatorBuilder WithFunction(string name, Delegate function) {
+        _customFunctionFactories.Add(d=>LambdaWrapperFactory.Create(name, function, d.Converter));
+        return this;
+    }
+
     public ICalculator<TInput, object> BuildForCalc<TInput>() =>
         new Calculator<TInput>(this);
 

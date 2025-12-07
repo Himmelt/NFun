@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using NFun.Types;
 
 namespace NFun.Interpretation.Functions; 
@@ -34,6 +35,40 @@ internal static class LambdaWrapperFactory {
         string name,
         Func<Tin1, Tin2, Tin3, Tin4, Tin5, Tin6, Tin7, Tout> function, FunnyConverter converter)
         => new ConcreteLambdaWrapperFunction<Tin1, Tin2, Tin3, Tin4, Tin5, Tin6, Tin7, Tout>(name, function, converter);
+
+    public static IConcreteFunction Create(string name, Delegate function, FunnyConverter converter)
+        => new GenericConcreteLambdaWrapperFunction(name, function, converter);
+}
+
+class GenericConcreteLambdaWrapperFunction : FunctionWithManyArguments {
+    private readonly Delegate _function;
+    private readonly IOutputFunnyConverter[] _argConverters;
+    private readonly IInputFunnyConverter _resultConverter;
+    private readonly Type[] _parameterTypes;
+    private readonly Type _returnType;
+
+    public GenericConcreteLambdaWrapperFunction(string id, Delegate function, FunnyConverter converter) : base(id) {
+        _function = function;
+        var method = function.Method;
+        _parameterTypes = method.GetParameters().Select(p => p.ParameterType).ToArray();
+        _returnType = method.ReturnType;
+
+        _argConverters = _parameterTypes.Select(t => converter.GetOutputConverterFor(t)).ToArray();
+        _resultConverter = converter.GetInputConverterFor(_returnType);
+
+        ArgTypes = _argConverters.Select(c => c.FunnyType).ToArray();
+        ReturnType = _resultConverter.FunnyType;
+    }
+
+    public override object Calc(object[] args) {
+        var convertedArgs = new object[_argConverters.Length];
+        for (int i = 0; i < _argConverters.Length; i++) {
+            convertedArgs[i] = _argConverters[i].ToClrObject(args[i]);
+        }
+
+        var result = _function.DynamicInvoke(convertedArgs);
+        return _resultConverter.ToFunObject(result);
+    }
 }
 
 class ConcreteLambdaWrapperFunction<Tin, Tout> : FunctionWithSingleArg {
