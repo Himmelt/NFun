@@ -1,36 +1,44 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <PackageVersion>1.0.3</PackageVersion>
-    <Version>1.0.3</Version>
-    <LangVersion>10</LangVersion>
-    <Title>NFun</Title>
-    <Authors>tmteam</Authors>
-    <Description>Expressions Evaluator for .NET</Description>
-    <Copyright>Copyright 2025</Copyright>
-    <PackageProjectUrl>https://github.com/tmteam/NFun</PackageProjectUrl>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageIcon>Icon.png</PackageIcon>
-    <RepositoryUrl>https://github.com/tmteam/NFun</RepositoryUrl>
-    <PackageTags>Not a functional intepritable language</PackageTags>
-    <PackageReleaseNotes>Strong named assembly. net8 support.</PackageReleaseNotes>
-    <AssemblyVersion>1.0.3</AssemblyVersion>
-    <FileVersion>1.0.3</FileVersion>
     <TargetFrameworks>net8.0</TargetFrameworks>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>Himmelt.NFun</PackageId>
+    <Version>1.0.3-beta1</Version>
+    <Title>NFun</Title>
+    <Authors>Himmelt</Authors>
+    <Company>Himmelt</Company>
+    <Description>.NET 表达式求值器</Description>
+    <Copyright>Copyright (c) 2025</Copyright>
+    <PackageProjectUrl>https://github.com/Himmelt/NFun</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Himmelt/NFun.git</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageIcon>nuget_logo.png</PackageIcon>
+    <PackageReleaseNotes>扩展 WithFunction Delegate 方法</PackageReleaseNotes>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <SignAssembly>False</SignAssembly>
-    <AssemblyOriginatorKeyFile>NFunKey.snk</AssemblyOriginatorKeyFile>
-    <PackageReadmeFile>nuget-readme.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="NFun.nuspec"/>
-    <PackageReference Include="IndexRange" Version="1.0.2"/>
-    <PackageReference Include="System.Memory" Version="4.5.5"/>
+    <None Remove="NFun.nuspec" />
+    <PackageReference Include="IndexRange" Version="1.0.2" />
+    <PackageReference Include="System.Memory" Version="4.5.5" />
     <None Update="Functions\GenericSwitchFunctionsGenerated.tt">
       <Generator>TextTemplatingFileGenerator</Generator>
       <LastGenOutput>GenericSwitchFunctionsGenerated.cs</LastGenOutput>
+    </None>
+    <None Include="..\..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\..\nuget_logo.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
     </None>
   </ItemGroup>
 
@@ -40,9 +48,5 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>GenericSwitchFunctionsGenerated.tt</DependentUpon>
     </Compile>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="Icon.png" Pack="true" PackagePath=""/>
-    <None Include="nuget-readme.md" Pack="true" PackagePath="" />
   </ItemGroup>
 </Project>
