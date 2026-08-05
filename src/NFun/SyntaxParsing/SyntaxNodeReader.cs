@@ -9,7 +9,9 @@ using NFun.Exceptions;
 using NFun.ParseErrors;
 using NFun.Runtime.Arrays;
 using NFun.SyntaxParsing.SyntaxNodes;
+using NFun.SyntaxParsing.SyntaxNodes;
 using NFun.Tokenization;
+using NFun.Types;
 
 namespace NFun.SyntaxParsing;
 
@@ -19,15 +21,21 @@ namespace NFun.SyntaxParsing;
 public static class SyntaxNodeReader {
     private const int MinPriority = 0;
     private const int OperatorBitInversePriority = 1;
-    private const int OperatorNotPriority = 10;
+    private const int OperatorNotPriority = 11;
+    // Unary minus must bind LESS tightly than `**` so `-2**2 = -(2**2) = -4`,
+    // matching school math (`-x² = -(x²)`), Python, and Ruby. Math-Sugar.md
+    // claims `²` is equivalent to `**` — that holds only when unary `-` lets
+    // `**` consume its operand first. Set to the same level as `**` so the
+    // unary's operand-read happily includes `**` chains.
+    private const int OperatorNegatePriority = 1;
 
     private static readonly int MaxPriority;
 
     private static readonly Dictionary<TokType, byte> BinaryPriorities = new();
 
     static SyntaxNodeReader() {
-        var priorities = new List<TokType[]>(14) {
-            new[] { TokType.ArrOBr, TokType.Dot, TokType.ParenthObr },
+        var priorities = new List<TokType[]>(15) {
+            new[] { TokType.ArrOBr, TokType.Dot, TokType.SafeAccess, TokType.Question, TokType.ForceUnwrap, TokType.Superscript, TokType.ParenthObr },
             new[] { TokType.Pow },
             new[] { TokType.Mult, TokType.Div, TokType.DivInt, TokType.Rema },
             new[] { TokType.Plus, TokType.Minus },
@@ -40,6 +48,7 @@ public static class SyntaxNodeReader {
                 TokType.LessOrEqual
             },
             new [] { TokType.In, TokType.Equal, TokType.NotEqual },
+            new[] { TokType.NullCoalesce },
             Array.Empty<TokType>(), // gap for unary 'not x'
             new[] { TokType.And },
             new[] { TokType.Xor },
@@ -80,7 +89,8 @@ public static class SyntaxNodeReader {
         { TokType.NotEqual, CoreFunNames.NotEqual },
         { TokType.BitShiftLeft, CoreFunNames.BitShiftLeft },
         { TokType.BitShiftRight, CoreFunNames.BitShiftRight },
-        { TokType.In, CoreFunNames.In }
+        { TokType.In, CoreFunNames.In },
+        { TokType.NullCoalesce, CoreFunNames.NullCoalesce }
     };
 
     private static readonly HashSet<TokType> ComparisonChainOperators = new() {
@@ -101,6 +111,22 @@ public static class SyntaxNodeReader {
     /// or returns null if underlying syntax cannot be represented as atomic node
     /// (EOF for example)
     /// /// </summary>
+    /// <summary>
+    /// Checks if the previous minus was a binary operator (not unary).
+    /// When we see `--`, we need to distinguish `5 - -3` (binary then unary, OK)
+    /// from `--3` or `- -3` (double unary, forbidden).
+    /// The first minus is binary if the token before it is a value-producing token.
+    /// </summary>
+    private static bool IsPreviousMinusBinary(TokFlow flow) {
+        // Previous is at position-1 (the first minus). Check position-2.
+        if (flow.CurrentTokenPosition < 2)
+            return false;
+        var beforeMinus = flow.GetTokenAt(flow.CurrentTokenPosition - 2);
+        return beforeMinus.Type is TokType.IntNumber or TokType.RealNumber or TokType.HexOrBinaryNumber
+            or TokType.Id or TokType.ParenthCbr or TokType.ArrCBr or TokType.Text
+            or TokType.True or TokType.False or TokType.CharLiteral;
+    }
+
     private static ISyntaxNode ReadAtomicNodeOrNull(TokFlow flow) {
         flow.SkipNewLines();
 
@@ -108,11 +134,11 @@ public static class SyntaxNodeReader {
         var start = flow.CurrentTokenFinishPosition;
         if (flow.IsCurrent(TokType.Minus))
         {
-            if (flow.IsPrevious(TokType.Minus))
+            if (flow.IsPrevious(TokType.Minus) && !IsPreviousMinusBinary(flow))
                 throw Errors.MinusDuplicates(flow.Previous, flow.Current);
             flow.MoveNext();
 
-            var nextNode = ReadNodeOrNull(flow, MinPriority);
+            var nextNode = ReadNodeOrNull(flow, OperatorNegatePriority);
             if (nextNode == null)
                 throw Errors.UnaryArgumentIsMissing(flow.Current);
 
@@ -178,6 +204,9 @@ public static class SyntaxNodeReader {
         if (flow.MoveIf(TokType.False, out var falseTok))
             return SyntaxNodeFactory.Constant(false, FunnyType.Bool, falseTok.Interval);
 
+        if (flow.MoveIf(TokType.None, out var noneTok))
+            return SyntaxNodeFactory.Constant(FunnyNone.Instance, FunnyType.None, noneTok.Interval);
+
         if (flow.MoveIf(TokType.HexOrBinaryNumber, out var binVal))
         {
             //0xff, 0b01
@@ -188,6 +217,15 @@ public static class SyntaxNodeReader {
                 _ => throw new NFunImpossibleException("Hex or bin constant has invalid format: " + val)
             };
             var substr = val.Replace("_", null)[2..];
+
+            // Empty body after the prefix (`0x_`, `0b_`, or even raw `0x`/`0b`
+            // if the tokenizer ever produces them) is not a valid number.
+            // Previously: `0b_` crashed with raw ArgumentOutOfRangeException
+            // from Convert.ToUInt64; `0x_` returned a misleading "UInt64
+            // overflow" via UInt64.TryParse(""). Surface a clean FU134
+            // "not valid hex/binary number" instead. (MBug3.)
+            if (substr.Length == 0)
+                throw Errors.NotAToken(binVal);
 
             if (dimensions == 16)
             {
@@ -231,6 +269,9 @@ public static class SyntaxNodeReader {
         if (flow.MoveIf(TokType.Text, out var txt))
             return SyntaxNodeFactory.Constant(new TextFunnyArray(txt.Value), FunnyType.Text, txt.Interval);
 
+        if (flow.MoveIf(TokType.CharLiteral, out var charTok))
+            return SyntaxNodeFactory.Constant(charTok.Value[0], FunnyType.Char, charTok.Interval);
+
         if (flow.MoveIf(TokType.Id, out var headToken))
         {
             //fun call
@@ -238,10 +279,14 @@ public static class SyntaxNodeReader {
             if (flow.IsCurrent(TokType.ParenthObr))
                 return ReadFunctionCall(flow, headToken);
 
+            // Named type constructor: Name{field=expr, ...}
+            if (flow.IsCurrent(TokType.FiObr) && !flow.IsPrevious(TokType.NewLine))
+                return ReadNamedTypeConstructor(flow, headToken);
+
             // variable with type definition
             //'id:int'
             var type = TryReadTypeDef(flow);
-            if (type != FunnyType.Empty)
+            if (type is not TypeSyntax.EmptyType)
                 return SyntaxNodeFactory.TypedVar(headToken.Value, type, headToken.Start, flow.CurrentTokenFinishPosition);
             // just variable
             // 'id'
@@ -256,6 +301,9 @@ public static class SyntaxNodeReader {
 
         if (flow.IsCurrent(TokType.If))
             return ReadIfThenElseNode(flow);
+
+        if (flow.IsCurrent(TokType.Try))
+            return ReadTryCatchNode(flow);
 
         // '[' can be used as array index, only if there is new line
         if (flow.IsCurrent(TokType.ArrOBr))
@@ -296,12 +344,18 @@ public static class SyntaxNodeReader {
 
             var opToken = flow.Current;
 
-            // Check for hidden multiplication
+            // Check for implicit multiplication
             // like "10x" or "10(x)"
-            if (IsHiddenMultiplication(leftNode, opToken))
+            if (IsImplicitMultiplication(leftNode, opToken))
             {
-                var rightNode = ReadAtomicNodeOrNull(flow).NotNull("R node cannot be read in hidden multiplication");
-                return SyntaxNodeFactory.BinOperatorCall(CoreFunNames.Multiply, leftNode, rightNode);
+                // Read right operand at postfix priority (0) so that e.g. 2x² → 2*(x²)
+                var rightNode = ReadNodeOrNull(flow, MinPriority)
+                    .NotNull("R node cannot be read in implicit multiplication");
+                // 2sin(x) is forbidden — only when trigger was Id followed by '(' (real function call)
+                if (opToken.Type == TokType.Id && rightNode is FunCallSyntaxNode { IsOperator: false } funCall)
+                    throw Errors.ImplicitMultiplicationBeforeFunctionCall(leftNode, funCall);
+                leftNode = SyntaxNodeFactory.BinOperatorCall(CoreFunNames.Multiply, leftNode, rightNode);
+                continue;
             }
 
             //if current token is not an operation
@@ -345,13 +399,59 @@ public static class SyntaxNodeReader {
             else if (opToken.Type == TokType.Dot)
             {
                 flow.MoveNext(); // dot
-                if (!flow.MoveIf(TokType.Id, out var id))
+                if (!flow.MoveIfFieldName(out var id))
                     throw Errors.FunctionOrStructMemberNameIsMissedAfterDot(opToken);
                 // Open parenthesis. It means call
-                if (flow.IsCurrent(TokType.ParenthObr))
-                    leftNode = ReadFunctionCall(flow, id, leftNode);
+                if (flow.IsCurrent(TokType.ParenthObr)) {
+                    // Propagate safe access through the entire chain:
+                    // x?.a.b.reverse() — leftNode is x?.a.b, need to walk Source chain to find ?.
+                    bool propagateSafe = IsInSafeAccessChain(leftNode);
+                    leftNode = ReadFunctionCall(flow, id, leftNode, isSafeCall: propagateSafe);
+                }
                 else //else it is struct field
                     leftNode = SyntaxNodeFactory.FieldAccess(leftNode, id);
+            }
+            else if (opToken.Type == TokType.SafeAccess)
+            {
+                flow.MoveNext(); // ?.
+                if (!flow.MoveIfFieldName(out var id))
+                    throw Errors.FunctionOrStructMemberNameIsMissedAfterDot(opToken);
+                // ?.method() — safe piped function call
+                if (flow.IsCurrent(TokType.ParenthObr))
+                    leftNode = ReadFunctionCall(flow, id, leftNode, isSafeCall: true);
+                else // ?.field — safe field access
+                    leftNode = SyntaxNodeFactory.SafeFieldAccess(leftNode, id);
+            }
+            else if (opToken.Type == TokType.Question)
+            {
+                // Standalone `?` in the post-expression operator slot is only valid as
+                // `?[index]` (safe array access). `?.` and `??` are tokenized as their own
+                // TokTypes (SafeAccess / NullCoalesce) and handled in their own branches.
+                // Type annotations like `int?` are parsed by TokenHelper.ReadTypeSyntax in
+                // a separate context — they never reach this loop.
+                if (flow.IsPrevious(TokType.NewLine))
+                    return leftNode;
+                flow.MoveNext(); // consume ?
+                // Trailing `?` not followed by `[` was crashing with raw
+                // InvalidOperationException from Interval ctor when ReadSafeArrayAccess
+                // built an error span with start > finish at EOF. Validate up front. (MR3Bug2.)
+                if (!flow.IsCurrent(TokType.ArrOBr))
+                    throw Errors.SafeArrayAccessOpenBracketMissed(leftNode, opToken);
+                return ReadSafeArrayAccess(flow, leftNode);
+            }
+            else if (opToken.Type == TokType.ForceUnwrap)
+            {
+                flow.MoveNext();
+                leftNode = SyntaxNodeFactory.UnarOperatorCall(
+                    CoreFunNames.ForceUnwrap, leftNode,
+                    leftNode.Interval.Start, opToken.Finish);
+            }
+            else if (opToken.Type == TokType.Superscript)
+            {
+                flow.MoveNext();
+                var exponent = int.Parse(opToken.Value);
+                var exponentNode = SyntaxNodeFactory.IntGenericConstant((ulong)exponent, opToken.Interval);
+                leftNode = SyntaxNodeFactory.BinOperatorCall(CoreFunNames.Pow, leftNode, exponentNode);
             }
             else if (ComparisonChainOperators.Contains(opToken.Type))
                 leftNode = ReadComparisonChain(flow, leftNode, priority);
@@ -362,7 +462,12 @@ public static class SyntaxNodeReader {
 
     private static ISyntaxNode ReadBinOperator(TokFlow flow, ISyntaxNode leftNode, Tok opToken, int priority) {
         flow.MoveNext();
-        var rightNode = ReadNodeOrNull(flow, priority - 1)
+        // Right-associative operators: ?? (like C#) and ** (math / Python / Ruby /
+        // JS / Fortran / Haskell / Lua convention — `2**3**2 = 2**(3**2) = 512`,
+        // not `(2**3)**2 = 64`). All other binary operators are left-associative.
+        var rightPriority = opToken.Type is TokType.NullCoalesce or TokType.Pow
+            ? priority : priority - 1;
+        var rightNode = ReadNodeOrNull(flow, rightPriority)
                         ?? throw Errors.RightBinaryArgumentIsMissing(leftNode, opToken);
 
         //building the tree from the left
@@ -405,10 +510,34 @@ public static class SyntaxNodeReader {
     }
 
     /// <summary>
-    /// Check for hidden multiplication
+    /// Checks if a node is part of a safe access chain (has ?. somewhere in its source chain).
+    /// Walks through field accesses and piped function calls to find the original ?. operator.
+    /// Example: x?.a.b.count() — .b and .count() are both in the safe chain started by ?.a
+    /// </summary>
+    private static bool IsInSafeAccessChain(ISyntaxNode node) {
+        var current = node;
+        while (true) {
+            switch (current) {
+                case StructFieldAccessSyntaxNode f:
+                    if (f.IsSafeAccess) return true;
+                    current = f.Source;
+                    continue;
+                case FunCallSyntaxNode fc when fc.IsSafeAccess:
+                    return true;
+                case FunCallSyntaxNode fc when fc.IsPipeForward && fc.Args.Length > 0:
+                    current = fc.Args[0];
+                    continue;
+                default:
+                    return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Check for implicit multiplication
     ///  like "10x" or 10(x)
     /// </summary>
-    private static bool IsHiddenMultiplication(ISyntaxNode leftNode, Tok currentToken) {
+    private static bool IsImplicitMultiplication(ISyntaxNode leftNode, Tok currentToken) {
         // left node has to be numeric constant
         if (leftNode is not ConstantSyntaxNode && leftNode is not GenericIntSyntaxNode)
             return false;
@@ -416,9 +545,10 @@ public static class SyntaxNodeReader {
         // no space between number and variable name allowed
         if (leftNode.Interval.Finish != currentToken.Interval.Start)
             return false;
-        // hidden multiplication allowed before 'id' or '(..)'
+        // implicit multiplication allowed before 'id' or '(..)'
 
-        return currentToken.Type == TokType.Id || currentToken.Type == TokType.ParenthObr;
+        return currentToken.Type == TokType.Id
+               || currentToken.Type == TokType.ParenthObr;
     }
 
     private static ISyntaxNode ReadFunAnonymousFunction(TokFlow flow) {
@@ -428,7 +558,7 @@ public static class SyntaxNodeReader {
         if (bodyOrTypeNotation == null)
             throw Errors.AnonymousFunBodyIsMissing(new Interval(flow.CurrentTokenPosition, pos));
 
-        var returnType = TryReadTypeDef(flow);
+        var returnType = TryReadTypeDef(flow, allowArrow: true);
         if (flow.Current.Is(TokType.Def))
         {
             if (bodyOrTypeNotation.ParenthesesCount != 1)
@@ -446,7 +576,7 @@ public static class SyntaxNodeReader {
             return SyntaxNodeFactory.AnonymFunction(definition, returnType, bodyOrTypeNotation);
         }
 
-        if (returnType != FunnyType.Empty)
+        if (returnType is not TypeSyntax.EmptyType)
             //If return type is specified, and there is no def after it - than it is an mistake
             throw Errors.AnonymousFunBodyIsMissing(new Interval(pos, pos));
 
@@ -457,6 +587,7 @@ public static class SyntaxNodeReader {
         var begin = flow.CurrentTokenFinishPosition;
 
         var equations = new List<EquationSyntaxNode>();
+        var seenFieldNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         bool hasAnyDelimeter = true;
         flow.SkipNewLines();
 
@@ -468,11 +599,18 @@ public static class SyntaxNodeReader {
                 throw Errors.StructFieldDelimiterIsMissed(new Interval(flow.CurrentTokenStartPosition - 1,
                     flow.CurrentTokenFinishPosition));
 
-            if (!flow.MoveIf(TokType.Id, out var idToken))
+            if (!flow.MoveIfFieldName(out var idToken))
                 throw Errors.StructFieldIdIsMissed(flow.Current);
 
+            // Reject duplicate field names BEFORE TIC. Without this guard, the
+            // solver receives `{a:?, a:?}` and emits a cryptic FU798 referencing
+            // internal node indices instead of telling the user the field is
+            // duplicated. Case-insensitive — matches struct field lookup. (MR9Bug2.)
+            if (!seenFieldNames.Add(idToken.Value))
+                throw Errors.StructLiteralDuplicateField(idToken.Value, idToken.Interval);
+
             var type = TryReadTypeDef(flow);
-            if (type != FunnyType.Empty)
+            if (type is not TypeSyntax.EmptyType)
                 throw Errors.StructFieldSpecificationIsNotSupportedYet(new Interval(idToken.Finish + 1,
                     flow.CurrentTokenStartPosition - 1));
 
@@ -502,6 +640,117 @@ public static class SyntaxNodeReader {
           return SyntaxNodeFactory.Struct(equations, interval);
     }
 
+    /// <summary>
+    /// Compile-time analysis of format spec → typed function calls.
+    /// Segments separated by ':'. First char determines type:
+    ///   0#., → numeric mask → toNumText(value, decimals, minDigits, thousands, forceZeros)
+    ///   ><^  → alignment   → padLeftText/padRightText/padCenterText(text, width)
+    ///   letter → named     → toHexText/toBinText/toSciText(value)
+    /// </summary>
+    /// <summary>
+    /// If current token is alignment direction, read width (literal, id, or parenthesized expr) and wrap.
+    /// Only allows: >10, >w, >(w*2) — not >w*2.
+    /// </summary>
+    private static ISyntaxNode TryWrapWithAlignment(TokFlow flow, ISyntaxNode inner, Interval interval) {
+        if (flow.Current.Type is not (TokType.AlignLeft or TokType.AlignRight or TokType.AlignCenter))
+            return inner;
+
+        // < = left-align (text left, pad right) → padRightText
+        // > = right-align (text right, pad left) → padLeftText
+        string padFunc = flow.Current.Type switch {
+            TokType.AlignLeft => CoreFunNames.PadRightText,
+            TokType.AlignRight => CoreFunNames.PadLeftText,
+            TokType.AlignCenter => CoreFunNames.PadCenterText,
+            _ => CoreFunNames.PadLeftText
+        };
+        flow.MoveNext();
+
+        // Read exactly one atom: integer literal, identifier, or (expr)
+        ISyntaxNode widthExpr;
+        if (flow.Current.Type is TokType.IntNumber) {
+            widthExpr = SyntaxNodeFactory.Constant(
+                int.Parse(flow.Current.Value), FunnyType.Int32, flow.Current.Interval);
+            flow.MoveNext();
+        } else if (flow.Current.Type is TokType.Id) {
+            widthExpr = SyntaxNodeFactory.Var(flow.Current);
+            flow.MoveNext();
+        } else if (flow.Current.Type is TokType.ParenthObr) {
+            widthExpr = ReadNodeOrNull(flow); // reads (expr) naturally
+        } else {
+            throw Errors.InvalidFormatSpecifier("alignment width must be a number, variable, or (expression)", interval);
+        }
+
+        if (widthExpr == null)
+            throw Errors.InvalidFormatSpecifier("alignment width is missing", interval);
+
+        return SyntaxNodeFactory.FunCall(padFunc, new[] { inner, widthExpr }, interval);
+    }
+
+    private static ISyntaxNode BuildFormatCall(ISyntaxNode valueExpr, string formatSpec, Interval interval) {
+        if (string.IsNullOrWhiteSpace(formatSpec))
+            return SyntaxNodeFactory.FunCall(CoreFunNames.ToText, new[] { valueExpr }, interval);
+
+        var seg = formatSpec.Trim();
+        char first = seg[0];
+
+        if (char.IsLetter(first)) {
+            // Named specifier (case-sensitive for sci/SCI)
+            return seg switch {
+                "hex" or "HEX" => SyntaxNodeFactory.FunCall(CoreFunNames.ToHexText, new[] { valueExpr }, interval),
+                "bin" => SyntaxNodeFactory.FunCall(CoreFunNames.ToBinText, new[] { valueExpr }, interval),
+                "sci" => SyntaxNodeFactory.FunCall(CoreFunNames.ToSciText, new[] {
+                    valueExpr, ConstBool(false, interval) }, interval),
+                "SCI" => SyntaxNodeFactory.FunCall(CoreFunNames.ToSciText, new[] {
+                    valueExpr, ConstBool(true, interval) }, interval),
+                _ => throw Errors.UnknownFormatSpecifier(seg, interval)
+            };
+        }
+
+        // Numeric mask
+        var (decimals, minDigits, thousands, forceZeros) = ParseMask(seg, interval);
+        return SyntaxNodeFactory.FunCall(CoreFunNames.ToNumText, new ISyntaxNode[] {
+            valueExpr,
+            ConstInt(decimals, interval),
+            ConstInt(minDigits, interval),
+            ConstBool(thousands, interval),
+            ConstBool(forceZeros, interval),
+        }, interval);
+    }
+
+    private static (int decimals, int minDigits, bool thousands, bool forceZeros) ParseMask(string mask, Interval interval) {
+        bool thousands = mask.Contains(",");
+        var clean = mask.Replace(",", "");
+
+        int dotIdx = clean.IndexOf('.');
+        string intPart, decPart;
+        if (dotIdx >= 0) {
+            intPart = clean.Substring(0, dotIdx);
+            decPart = clean.Substring(dotIdx + 1);
+        } else {
+            intPart = clean;
+            decPart = "";
+        }
+
+        // Validate characters
+        foreach (var c in clean)
+            if (c != '0' && c != '#' && c != '.' && c != ' ')
+                throw Errors.InvalidFormatSpecifier(mask, interval);
+
+        int decimals = decPart.Length;
+        bool forceZeros = decPart.Length == 0 || decPart.Contains("0");
+        int minDigits = 0;
+        foreach (var c in intPart)
+            if (c == '0') minDigits++;
+
+        return (decimals, minDigits, thousands, forceZeros);
+    }
+
+    private static ISyntaxNode ConstInt(int value, Interval interval) =>
+        SyntaxNodeFactory.Constant(value, FunnyType.Int32, interval);
+
+    private static ISyntaxNode ConstBool(bool value, Interval interval) =>
+        SyntaxNodeFactory.Constant(value, FunnyType.Bool, interval);
+
     private static ISyntaxNode ReadInterpolationText(TokFlow flow) {
         var openInterpolationToken = flow.AssertAndMove(TokType.TextOpenInterpolation);
         //interpolation
@@ -521,11 +770,27 @@ public static class SyntaxNodeReader {
             //{...}
             var allNext = ReadNodeOrNull(flow);
             if (allNext == null)
+            {
+                if (concatenations.Count == 0)
+                    throw Errors.InterpolationExpressionIsMissing(openInterpolationToken.Interval);
                 throw Errors.InterpolationExpressionIsMissing(concatenations.Last());
+            }
 
-            var toText = SyntaxNodeFactory.FunCall(CoreFunNames.ToText, new[] { allNext }, allNext.Interval);
-            concatenations.Add(toText);
-
+            // Check for format specifier: {expr:format}, {expr:>width}, {expr:format:>width}
+            ISyntaxNode textExpr;
+            if (flow.Current.Type is TokType.FormatSpec) {
+                textExpr = BuildFormatCall(allNext, flow.Current.Value, flow.Current.Interval);
+                flow.MoveNext();
+                // Check for alignment after format
+                textExpr = TryWrapWithAlignment(flow, textExpr, allNext.Interval);
+            } else if (flow.Current.Type is TokType.AlignLeft or TokType.AlignRight or TokType.AlignCenter) {
+                // Alignment only, no format
+                textExpr = SyntaxNodeFactory.FunCall(CoreFunNames.ToText, new[] { allNext }, allNext.Interval);
+                textExpr = TryWrapWithAlignment(flow, textExpr, allNext.Interval);
+            } else {
+                textExpr = SyntaxNodeFactory.FunCall(CoreFunNames.ToText, new[] { allNext }, allNext.Interval);
+            }
+            concatenations.Add(textExpr);
 
             //interpolation end
             // }...'
@@ -575,7 +840,9 @@ public static class SyntaxNodeReader {
                 flow.MoveNext();
             }
             else
-                throw new NFunImpossibleException("imp328. Invalid interpolation sequence");
+                throw Errors.InvalidFormatSpecifier(
+                    flow.Current.Value ?? "?",
+                    flow.Current.Interval);
         }
     }
 
@@ -585,49 +852,81 @@ public static class SyntaxNodeReader {
     private static ISyntaxNode ReadArraySlice(TokFlow flow, ISyntaxNode arrayNode) {
         var openBraket = flow.Current;
         flow.MoveNext();
-        var index = ReadNodeOrNull(flow);
 
-        if (!flow.MoveIf(TokType.Colon, out var colon))
+        // Inside array brackets, ':' means slice separator, not type annotation.
+        var savedSuppress = flow.SuppressTypeAnnotation;
+        flow.SuppressTypeAnnotation = true;
+        try
         {
-            if (index == null)
+            var index = ReadNodeOrNull(flow);
+
+            if (!flow.MoveIf(TokType.Colon, out var colon))
             {
-                if (flow.MoveIf(TokType.ArrCBr, out var closeBracket))
-                    throw Errors.ArrayIndexExpected(openBraket, closeBracket);
-                else
-                    throw Errors.ArrayIndexOrSliceExpected(openBraket);
+                if (index == null)
+                {
+                    if (flow.MoveIf(TokType.ArrCBr, out var closeBracket))
+                        throw Errors.ArrayIndexExpected(openBraket, closeBracket);
+                    else
+                        throw Errors.ArrayIndexOrSliceExpected(openBraket);
+                }
+
+                if (!flow.MoveIf(TokType.ArrCBr))
+                    throw Errors.ArrayIndexCbrMissed(openBraket, flow.Current);
+
+                return SyntaxNodeFactory.OperatorCall(
+                    CoreFunNames.GetElementName,
+                    new[] { arrayNode, index }, openBraket.Start,
+                    flow.CurrentTokenFinishPosition);
             }
 
+            index ??= SyntaxNodeFactory.Constant(0, FunnyType.Int32, new Interval(openBraket.Start, colon.Finish));
+
+            var end = ReadNodeOrNull(flow) ??
+                      SyntaxNodeFactory.Constant(int.MaxValue, FunnyType.Int32,
+                          new Interval(colon.Finish, flow.CurrentTokenFinishPosition));
+
+            if (!flow.MoveIf(TokType.Colon, out _))
+            {
+                if (!flow.MoveIf(TokType.ArrCBr))
+                    throw Errors.ArraySliceCbrMissed(openBraket, flow.Current, false);
+                return SyntaxNodeFactory.OperatorCall(
+                    CoreFunNames.SliceName, new[] { arrayNode, index, end }, openBraket.Start,
+                    flow.CurrentTokenFinishPosition);
+            }
+
+            var step = ReadNodeOrNull(flow);
             if (!flow.MoveIf(TokType.ArrCBr))
-                throw Errors.ArrayIndexCbrMissed(openBraket, flow.Current);
+                throw Errors.ArraySliceCbrMissed(openBraket, flow.Current, true);
+            if (step == null)
+                return SyntaxNodeFactory.OperatorCall(
+                    CoreFunNames.SliceName, new[] { arrayNode, index, end }, openBraket.Start,
+                    flow.CurrentTokenFinishPosition);
 
             return SyntaxNodeFactory.OperatorCall(
-                CoreFunNames.GetElementName,
-                new[] { arrayNode, index }, openBraket.Start,
+                CoreFunNames.SliceName, new[] { arrayNode, index, end, step }, openBraket.Start,
                 flow.CurrentTokenFinishPosition);
         }
-
-        index ??= SyntaxNodeFactory.Constant(0, FunnyType.Int32, new Interval(openBraket.Start, colon.Finish));
-
-        var end = ReadNodeOrNull(flow) ??
-                  SyntaxNodeFactory.Constant(int.MaxValue, FunnyType.Int32, new Interval(colon.Finish, flow.CurrentTokenFinishPosition));
-
-        if (!flow.MoveIf(TokType.Colon, out _))
+        finally
         {
-            if (!flow.MoveIf(TokType.ArrCBr))
-                throw Errors.ArraySliceCbrMissed(openBraket, flow.Current, false);
-            return SyntaxNodeFactory.OperatorCall(
-                CoreFunNames.SliceName, new[] { arrayNode, index, end }, openBraket.Start, flow.CurrentTokenFinishPosition);
+            flow.SuppressTypeAnnotation = savedSuppress;
         }
+    }
 
-        var step = ReadNodeOrNull(flow);
+    /// <summary>
+    /// Read safe array access: ?[index]
+    /// </summary>
+    private static ISyntaxNode ReadSafeArrayAccess(TokFlow flow, ISyntaxNode arrayNode) {
+        var openBracket = flow.Current;
+        flow.MoveNext(); // consume [
+        var index = ReadNodeOrNull(flow);
+        if (index == null)
+            throw Errors.ArrayIndexExpected(openBracket, flow.Current);
         if (!flow.MoveIf(TokType.ArrCBr))
-            throw Errors.ArraySliceCbrMissed(openBraket, flow.Current, true);
-        if (step == null)
-            return SyntaxNodeFactory.OperatorCall(
-                CoreFunNames.SliceName, new[] { arrayNode, index, end }, openBraket.Start, flow.CurrentTokenFinishPosition);
-
+            throw Errors.ArrayIndexCbrMissed(openBracket, flow.Current);
         return SyntaxNodeFactory.OperatorCall(
-            CoreFunNames.SliceName, new[] { arrayNode, index, end, step }, openBraket.Start, flow.CurrentTokenFinishPosition);
+            CoreFunNames.SafeGetElementName,
+            new[] { arrayNode, index }, openBracket.Start,
+            flow.CurrentTokenFinishPosition);
     }
 
     /// <summary>
@@ -668,7 +967,7 @@ public static class SyntaxNodeReader {
                 throw Errors.ArrayInitializeSecondIndexMissed(openBracket, lastToken, missedVal);
             }
 
-            if (flow.MoveIf(TokType.Step, out var step))
+            if (flow.MoveIfIdEquals("step", out var step))
             {
                 var thirdArg = ReadNodeOrNull(flow);
                 if (thirdArg == null)
@@ -796,21 +1095,106 @@ public static class SyntaxNodeReader {
         return SyntaxNodeFactory.IfElse(ifThenNodes.ToArray(), elseResult, ifElseStart, flow.CurrentTokenFinishPosition);
     }
 
-    private static ISyntaxNode ReadFunctionCall(TokFlow flow, Tok head, ISyntaxNode pipedVal = null) {
+    private static ISyntaxNode ReadFunctionCall(TokFlow flow, Tok head, ISyntaxNode pipedVal = null, bool isSafeCall = false) {
         var obrId = flow.CurrentTokenPosition;
         var start = pipedVal?.Interval.Start ?? head.Start;
         if (!flow.MoveIf(TokType.ParenthObr))
             throw Errors.FunctionCallObrMissed(start, head.Value, flow.CurrentTokenFinishPosition, pipedVal);
 
-        var arguments = ReadNodeList(flow);
+        var positionalArgs = new List<ISyntaxNode>();
+        List<NamedCallArgument> namedArgs = null;
+        bool seenNamed = false;
+        bool seenSpread = false;
+        int keywordOnlyNamedStartIndex = -1;
+
+        if (!flow.IsCurrent(TokType.ParenthCbr))
+        {
+            do
+            {
+                // Named argument: Id '=' expr
+                if (flow.IsCurrent(TokType.Id) && flow.Peek?.Type == TokType.Def)
+                {
+                    var nameTok = flow.Current;
+                    flow.MoveNext(); // skip Id
+                    flow.MoveNext(); // skip '='
+                    seenNamed = true;
+
+                    var exp = ReadNodeOrNull(flow);
+                    if (exp == null)
+                        throw Errors.FunctionArgumentError(head.Value, obrId, flow);
+                    // Track where keyword-only args start (named args after ...)
+                    if (seenSpread && keywordOnlyNamedStartIndex < 0)
+                        keywordOnlyNamedStartIndex = namedArgs?.Count ?? 0;
+                    (namedArgs ??= new List<NamedCallArgument>())
+                        .Add(new NamedCallArgument(nameTok.Value, exp, nameTok.Interval));
+                }
+                else if (flow.IsCurrent(TokType.Spread))
+                {
+                    // ...x in function definition or spread in call (future)
+                    seenSpread = true;
+                    var spreadTok = flow.Current;
+                    flow.MoveNext();
+                    var exp = ReadNodeOrNull(flow);
+                    if (exp == null)
+                        throw Errors.FunctionArgumentError(head.Value, obrId, flow);
+                    // Mark as spread by wrapping — Parser.ReadFunDefinition will interpret
+                    if (exp is TypedVarDefSyntaxNode typedVar)
+                    {
+                        positionalArgs.Add(new TypedVarDefSyntaxNode(
+                            typedVar.Id, typedVar.TypeSyntax,
+                            new Interval(spreadTok.Start, exp.Interval.Finish),
+                            typedVar.DefaultValue, isParams: true));
+                    }
+                    else if (exp is NamedIdSyntaxNode namedId)
+                    {
+                        positionalArgs.Add(SyntaxNodeFactory.TypedVar(
+                            namedId.Id, TypeSyntax.Empty,
+                            spreadTok.Start, exp.Interval.Finish,
+                            isParams: true));
+                    }
+                    else
+                    {
+                        // ...expr in call context — future spread support
+                        positionalArgs.Add(exp);
+                    }
+                }
+                else
+                {
+                    // Positional after named = error
+                    if (seenNamed)
+                        throw Errors.PositionalArgAfterNamed(head.Value, flow.Current?.Interval ?? new Interval(obrId, obrId));
+
+                    var exp = ReadNodeOrNull(flow);
+                    if (exp == null)
+                        break;
+
+                    // Typed param with default: x:type = expr (in function definition context)
+                    if (exp is TypedVarDefSyntaxNode typedArg && flow.IsCurrent(TokType.Def))
+                    {
+                        flow.MoveNext(); // skip '='
+                        var defaultVal = ReadNodeOrNull(flow);
+                        if (defaultVal == null)
+                            throw Errors.FunctionArgumentError(head.Value, obrId, flow);
+                        positionalArgs.Add(new TypedVarDefSyntaxNode(
+                            typedArg.Id, typedArg.TypeSyntax, typedArg.Interval, defaultVal));
+                    }
+                    else
+                        positionalArgs.Add(exp);
+                }
+            } while (flow.MoveIf(TokType.Sep, out _));
+        }
 
         if (!flow.MoveIf(TokType.ParenthCbr, out _))
             throw Errors.FunctionArgumentError(head.Value, obrId, flow);
 
+        var named = namedArgs is { Count: > 0 } ? namedArgs.ToArray() : null;
+
         if (pipedVal == null)
-            return SyntaxNodeFactory.FunCall(head.Value, arguments, start, flow.CurrentTokenFinishPosition);
-        else
-            return SyntaxNodeFactory.PipedFunCall(head.Value, pipedVal, arguments, start, flow.CurrentTokenFinishPosition);
+            return SyntaxNodeFactory.FunCall(head.Value, positionalArgs, start, flow.CurrentTokenFinishPosition, named, keywordOnlyNamedStartIndex);
+        var result = SyntaxNodeFactory.PipedFunCall(head.Value, pipedVal, positionalArgs, start, flow.CurrentTokenFinishPosition, named, keywordOnlyNamedStartIndex);
+        if (isSafeCall && result is FunCallSyntaxNode funCall)
+            funCall.IsSafeAccess = true;
+        return result;
     }
 
     private static ISyntaxNode ReadResultCall(TokFlow flow, ISyntaxNode functionResultNode) {
@@ -839,15 +1223,103 @@ public static class SyntaxNodeReader {
         return read;
     }
 
-    private static FunnyType TryReadTypeDef(TokFlow flow) {
-        if (!flow.IsCurrent(TokType.Colon))
-            return FunnyType.Empty;
+    private static TypeSyntax TryReadTypeDef(TokFlow flow, bool allowArrow = false) {
+        if (flow.SuppressTypeAnnotation)
+            return TypeSyntax.Empty;
+        if (!flow.IsCurrent(TokType.Colon) && !(allowArrow && flow.IsCurrent(TokType.Arrow)))
+            return TypeSyntax.Empty;
 
         flow.MoveNext();
         var current = flow.Current;
-        var type = flow.ReadType();
-        if (type == FunnyType.Empty)
+        var type = flow.ReadTypeSyntax();
+        if (type is TypeSyntax.EmptyType)
             throw Errors.TypeExpectedButWas(current);
         return type;
+    }
+
+    /// <summary>
+    /// Reads named type constructor: Name{field=expr, ...}
+    /// headToken is the type name, flow is at '{'
+    /// </summary>
+    private static ISyntaxNode ReadNamedTypeConstructor(TokFlow flow, Tok headToken) {
+        flow.MoveNext(); // skip '{'
+        var equations = new List<EquationSyntaxNode>();
+        bool hasAnyDelimiter = true;
+        flow.SkipNewLines();
+
+        while (true)
+        {
+            if (flow.MoveIf(TokType.FiCbr))
+                break;
+            if (!hasAnyDelimiter)
+                throw Errors.StructFieldDelimiterIsMissed(new Interval(flow.CurrentTokenStartPosition - 1,
+                    flow.CurrentTokenFinishPosition));
+
+            if (!flow.MoveIfFieldName(out var idToken))
+                throw Errors.StructFieldIdIsMissed(flow.Current);
+
+            if (!flow.MoveIf(TokType.Def))
+                throw Errors.StructFieldDefinitionTokenIsMissed(flow.Current);
+
+            flow.SkipNewLines();
+            var body = ReadNodeOrNull(flow);
+            if (body == null)
+                throw Errors.StructFieldBodyIsMissed(idToken);
+            var equation = SyntaxNodeFactory.Equation(idToken, body);
+            equations.Add(equation);
+            hasAnyDelimiter = flow.Previous.Type == TokType.NewLine;
+            if (flow.MoveIf(TokType.Sep))
+                hasAnyDelimiter = true;
+            if (flow.SkipNewLines())
+                hasAnyDelimiter = true;
+            if (flow.IsDoneOrEof())
+                throw Errors.StructIsUndone(flow.CurrentTokenFinishPosition);
+        }
+
+        var interval = new Interval(headToken.Start, flow.CurrentTokenFinishPosition);
+        return new NamedTypeConstructorSyntaxNode(
+            headToken.Value, headToken.Interval, equations, interval);
+    }
+
+    /// <summary>
+    /// Parses: try expr catch expr
+    /// </summary>
+    private static ISyntaxNode ReadTryCatchNode(TokFlow flow) {
+        var start = flow.CurrentTokenPosition;
+        flow.MoveNext(); // skip 'try'
+
+        var tryExpr = ReadNodeOrNull(flow);
+        if (tryExpr == null)
+            throw Errors.ThenExpressionIsMissing(start, flow.CurrentTokenFinishPosition);
+
+        if (!flow.MoveIf(TokType.Catch))
+            throw Errors.ElseKeywordIsMissing(start, flow.CurrentTokenFinishPosition);
+
+        // Lookahead: catch(id) = error binding, catch (expr) = fallback
+        // Save position, try to read (id) pattern, restore if not matched
+        string errorVarName = null;
+        if (flow.IsCurrent(TokType.ParenthObr)) {
+            var savedPos = flow.CurrentTokenPosition;
+            flow.MoveNext(); // skip '('
+            if (flow.IsCurrent(TokType.Id)) {
+                var idValue = flow.Current.Value;
+                flow.MoveNext(); // skip id
+                if (flow.IsCurrent(TokType.ParenthCbr)) {
+                    flow.MoveNext(); // skip ')'
+                    errorVarName = idValue; // matched: catch(id)
+                } else {
+                    flow.Move(savedPos); // restore — not (id)
+                }
+            } else {
+                flow.Move(savedPos); // restore — not (id)
+            }
+        }
+
+        var catchExpr = ReadNodeOrNull(flow);
+        if (catchExpr == null)
+            throw Errors.ElseExpressionIsMissing(start, flow.CurrentTokenFinishPosition);
+
+        return new TryCatchSyntaxNode(tryExpr, catchExpr, errorVarName,
+            new Interval(start, flow.CurrentTokenFinishPosition));
     }
 }

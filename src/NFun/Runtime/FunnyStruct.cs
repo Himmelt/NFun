@@ -41,16 +41,31 @@ public class FunnyStruct : IReadOnlyDictionary<string, object> {
     public override bool Equals(object obj) {
         if (obj is not FunnyStruct str)
             return false;
+        // Structural equality: same field count + same fields + same values.
+        // Per spec: "same list of fields (id and types) and all values equal."
+        // {a=1} != {a=1, b=2} — different field count.
         if (_values.Count != str._values.Count)
             return false;
         foreach (var (key, value) in _values)
         {
-            var otherValue = str.GetValue(key);
+            if (!str._values.TryGetValue(key, out var otherValue))
+                return false;
             if (!otherValue.Equals(value))
                 return false;
         }
 
         return true;
+    }
+
+    public override int GetHashCode() {
+        // Include field count for better distribution — structs with different
+        // field counts are never equal, so their hashes can differ.
+        unchecked {
+            int hash = _values.Count;
+            foreach (var (key, value) in _values)
+                hash = hash * 31 + key.GetHashCode();
+            return hash;
+        }
     }
 
     public bool ContainsKey(string key) => _values.ContainsKey(key);

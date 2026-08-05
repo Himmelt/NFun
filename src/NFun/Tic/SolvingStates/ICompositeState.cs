@@ -1,32 +1,38 @@
-﻿using System.Collections.Generic;
+﻿namespace NFun.Tic.SolvingStates;
 
-namespace NFun.Tic.SolvingStates;
+using System.Collections.Generic;
 
 public interface ITypeState : ITicNodeState {
-    ITypeState GetLastCommonAncestorOrNull(ITypeState otherType);
-    bool CanBeImplicitlyConvertedTo(StatePrimitive type);
+    public ITypeState GetLastCommonAncestorOrNull(ITypeState otherType);
 }
 
 public interface ICompositeState : ITypeState {
-    ICompositeState GetNonReferenced();
+    public ICompositeState GetNonReferenced();
     /// <summary>
     /// State of any Member node is 'RefTo'
     /// </summary>
-    bool HasAnyReferenceMember { get; }
-    IEnumerable<TicNode> Members { get; }
-    IEnumerable<TicNode> AllLeafTypes { get; }
+    public bool HasAnyReferenceMember { get; }
+
+    public int MemberCount { get; }
+    public TicNode GetMember(int index);
+    public IEnumerable<TicNode> Members { get; }
 }
 
 public interface ITicNodeState {
     /// <summary>
     /// This type is not solved or can be changed
     /// </summary>
-    bool IsMutable { get; }
+    public bool IsMutable { get; }
 
     /// <summary>
     /// This type and all dependent type are solved.
     /// </summary>
-    bool IsSolved { get; }
+    public bool IsSolved { get; }
 
-    string Description { get; }
+    public string Description { get; }
+
+    public string PrintState(int depth);
+    public string StateDescription { get; }
+
+    public bool CanBePessimisticConvertedTo(StatePrimitive primitive);
 }

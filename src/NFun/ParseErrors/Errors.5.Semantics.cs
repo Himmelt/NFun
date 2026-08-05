@@ -41,6 +41,9 @@ internal static partial class Errors {
     internal static FunnyParseException FieldNotExists(string name, Interval interval) => new(
         828, $"Access to non exist field `{name}`", interval);
 
+    internal static FunnyParseException SafeAccessOnNonOptional(Interval interval) => new(
+        829, $"'?.' can only be used on optional types. Use '.' for non-optional struct access", interval);
+
     internal static FunnyParseException FieldIsMissed(string name, Interval interval) => new(
         831, $"Field `{name}` is missed in struct", interval);
 
@@ -89,6 +92,15 @@ internal static partial class Errors {
     internal static FunnyParseException InterpolationExpressionIsMissing(ISyntaxNode lastNode) => new(
         864, $"Interpolation expression is missing{Nl} Example: 'before {{...}} after' ", lastNode.Interval);
 
+    internal static FunnyParseException InterpolationExpressionIsMissing(Interval interval) => new(
+        864, $"Interpolation expression is missing{Nl} Example: 'before {{...}} after' ", interval);
+
+    internal static FunnyParseException InvalidFormatSpecifier(string spec, Interval interval) => new(
+        865, $"Invalid format specifier '{spec}'. Mask chars: 0 # . , or named: hex, bin, sci", interval);
+
+    internal static FunnyParseException UnknownFormatSpecifier(string spec, Interval interval) => new(
+        866, $"Unknown format specifier '{spec}'. Named specifiers: hex, HEX, bin, sci, SCI", interval);
+
     internal static FunnyParseException FunctionNameAndVariableNameConflict(VariableSource variableSource, VariableExpressionNode usages) => new(
         867, $"Function with name: {variableSource.Name} can not be used in expression because it's name conflict with function that exists in scope. Declare input variable",
         usages?.Source.TypeSpecificationIntervalOrNull
@@ -96,8 +108,8 @@ internal static partial class Errors {
         ?? variableSource.TypeSpecificationIntervalOrNull
         ?? Interval.Empty );
 
-    internal static FunnyParseException FunctionNotFoundForHiOrderUsage(FunCallSyntaxNode node, IFunctionDictionary functions) {
-        var candidates = functions.SearchAllFunctionsIgnoreCase(node.Id, node.Args.Length);
+    internal static FunnyParseException FunctionNotFoundForHiOrderUsage(FunCallSyntaxNode node, IFunctionRegistry functions) {
+        var candidates = functions.SearchAllFunctionsIgnoreCase(node.Id, node.Args.Length, isExtensionCall: node.IsPipeForward);
         var msg = new StringBuilder($"Function '{node.Id}({string.Join(",", node.Args.Select(_ => "_"))})' is not found. ");
         if (candidates.Any())
         {
@@ -112,6 +124,10 @@ internal static partial class Errors {
 
         return new(870, msg.ToString(), interval);
     }
+
+    internal static FunnyParseException FieldIsNotCallable(string fieldName, FunnyType fieldType, Interval interval) =>
+        new(871, $"Cannot call '{fieldName}': field has type '{fieldType}', not a function. " +
+                 $"To call a field as a function, it must contain a rule (e.g., {{f = (rule it * 2)}}).", interval);
 
     internal static FunnyParseException CannotUseOutputValueBeforeItIsDeclared(VariableSource variableSource, VariableExpressionNode node) {
         var interval = node?.Interval ??
@@ -128,4 +144,58 @@ internal static partial class Errors {
 
     #endregion
 
+
+    #region optional operators
+
+    internal static FunnyParseException OptionalTypesNotSupported(string operatorName, Interval interval) {
+        var opSymbol = operatorName == Functions.CoreFunNames.ForceUnwrap ? "!" : "??";
+        return new(882, $"Operator '{opSymbol}' requires optional types to be enabled", interval);
+    }
+
+    internal static FunnyParseException CoalesceTypeMismatch(FunnyType leftInner, FunnyType right, Interval interval) =>
+        new(887, $"Incompatible types in '??': cannot coalesce {leftInner} with {right}", interval);
+
+    internal static FunnyParseException CoalesceRightOperandIsOptional(Interval interval) =>
+        new(886, "Right operand of '??' must be non-optional. Use a non-optional default value, e.g. 'x ?? y ?? 0'", interval);
+
+    internal static FunnyParseException NoneLiteralNotSupported(Interval interval) =>
+        new(883, "'none' literal requires optional types to be enabled", interval);
+
+    internal static FunnyParseException SafeAccessNotSupported(Interval interval) =>
+        new(884, "Operator '?.' requires optional types to be enabled", interval);
+
+    internal static FunnyParseException OptionalTypeNotSupported(string varId, Interval interval) =>
+        new(885, $"Optional type declaration for '{varId}' requires optional types to be enabled", interval);
+
+    /// <summary>
+    /// Raised when convert() is invoked with a (source, target) pair that has no
+    /// algebraic morphism in the conversion matrix (Specs/Functions.md). The `:T?`
+    /// optional target does NOT rescue these — there is no morphism to be partial in.
+    /// </summary>
+    internal static FunnyParseException ConvertNotSupported(string fromType, string toType, string hint = null) {
+        var msg = $"convert from `{fromType}` to `{toType}` is not supported";
+        if (hint != null) msg += $". {hint}";
+        return new(887, msg, Interval.Empty);
+    }
+
+    #endregion
+
+    #region named arguments
+
+    internal static FunnyParseException UnknownNamedArgument(string functionName, string argName, Interval interval) =>
+        new(890, $"Function '{functionName}' has no parameter named '{argName}'", interval);
+
+    internal static FunnyParseException NamedArgOverlapsPositional(string functionName, string argName, Interval interval) =>
+        new(891, $"Named argument '{argName}' overlaps with positional argument in call to '{functionName}'", interval);
+
+    internal static FunnyParseException DuplicateNamedArgument(string functionName, string argName, Interval interval) =>
+        new(892, $"Duplicate named argument '{argName}' in call to '{functionName}'", interval);
+
+    internal static FunnyParseException MissingArgument(string functionName, string paramName, Interval interval) =>
+        new(893, $"Missing argument '{paramName}' in call to '{functionName}'", interval);
+
+    internal static FunnyParseException NamedArgsNotSupportedForBuiltIn(string functionName, Interval interval) =>
+        new(894, $"Named arguments are not supported for built-in function '{functionName}'", interval);
+
+    #endregion
 }

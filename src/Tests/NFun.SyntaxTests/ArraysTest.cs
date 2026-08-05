@@ -1,9 +1,10 @@
 using System;
+using System.Linq;
 using NFun.Exceptions;
 using NFun.TestTools;
 using NFun.Tic;
+using NFun.Types;
 using NUnit.Framework;
-
 namespace NFun.SyntaxTests;
 
 [TestFixture]
@@ -183,7 +184,6 @@ public class ArraysTest {
         Assert.IsInstanceOf<object[]>(result);
     }
 
-    [Ignore("Composite upcast is not ready yet")]
     [TestCase("out = [[0x1],[1.0]]")]
     //[TestCase("out = [[1.0],[0x1]]")]
     [TestCase("out = [[0x1],[1.0],[0x1]]")]
@@ -195,7 +195,6 @@ public class ArraysTest {
     }
 
     [Test(Description = "out:real[][] = [[0x1],[1.0]]")]
-    [Ignore("Composite upcast is not ready yet")]
     public void ConstantTwinRealArrayWithUpcast_typeIsSpecified() {
         TraceLog.IsEnabled = true;
         var expr = "out:real[][] = [[0x1],[1.0]]";
@@ -204,9 +203,41 @@ public class ArraysTest {
     }
 
     [Test]
-    [Ignore("Composite LCA")]
-    public void ConstantTwinAnyArrayWithUpcast() {
+    public void ConstantTwinAnyArrayWithUpcast2() {
+        using var _ = TraceLog.Scope;
         var expr = "out = [[0x1],[1.0],[true]]";
+        var result = expr.Calc().Get("out");
+        Assert.IsInstanceOf<object[][]>(result);
+    }
+
+    [Test]
+    public void ConstantTwinAnyArrayWithUpcast3() {
+        using var _ = TraceLog.Scope;
+        var expr = "out = [[],[true]]";
+        var result = expr.Calc().Get("out");
+        Assert.IsInstanceOf<bool[][]>(result);
+    }
+
+    [Test]
+    public void ConstantTwinAnyArrayWithUpcast4() {
+        using var _ = TraceLog.Scope;
+        var expr = "out:bool[][] = [[],[true]]";
+        var result = expr.Calc().Get("out");
+        Assert.IsInstanceOf<bool[][]>(result);
+    }
+
+    [Test]
+    public void ConstantTwinAnyArrayWithUpcast5() {
+        using var _ = TraceLog.Scope;
+        var expr = "out:any[][] = [[],[true]]";
+        var result = expr.Calc().Get("out");
+        Assert.IsInstanceOf<object[][]>(result);
+    }
+
+    [Test]
+    public void ConstantTwinAnyArrayWithUpcast6() {
+        using var _ = TraceLog.Scope;
+        var expr = "out = [[],[]]";
         var result = expr.Calc().Get("out");
         Assert.IsInstanceOf<object[][]>(result);
     }
@@ -374,13 +405,391 @@ filtrat   = x.filter(rule it> filt) # filt - input variable
     [TestCase("y = [4..1..-2.0]")]
     [TestCase("y = [1..4..-2.0]")]
     [TestCase("y = [1..4..0]")]
+    // FU711 — `in(T, T[])` rejects vacuous T=Any when args are at mismatched structural depths.
+    [TestCase("y = 'h' in 'hello'")]     // char[] vs char[]: T must be both char and char[]
+    [TestCase("y = [1,2] in [1,2,3]")]   // int[] vs int[]: T must be both int and int[]
+    [TestCase("y = 1 in 'hello'")]        // int vs char[]: T must be both int and char
+    [TestCase("y = true in [1,2,3]")]     // bool vs int[]: T must be both bool and int
     public void ObviouslyFailsOnParse(string expr)
         => expr.AssertObviousFailsOnParse();
+
+    // FU711 — `in(T, T[])` success cases: T resolves consistently.
+    [TestCase("y = 'abc' in ['abc', 'def']", true)]   // text vs text[]
+    [TestCase("y = /'h' in 'hello'", true)]           // char vs char[]
+    [TestCase("y = [1,2] in [[1,2],[3,4]]", true)]    // int[] vs int[][]
+    [TestCase("y = 'hello' in ['hello', 'world']", true)]  // text vs text[]
+    public void InOperator_DepthConsistent_Works(string expr, bool expected) =>
+        expr.AssertReturns("y", expected);
 
 
     [TestCase("y = [0..10][11]")]
     [TestCase("y = [0..1 step 0]")]
     [TestCase("y = ['a', 'b'][2]")]
+    [TestCase("y = [1,2,3,4,5][::0]")]
     public void ObviouslyFailsOnRuntime(string expr) =>
         Assert.Throws<FunnyRuntimeException>(() => expr.Calc());
+    // Bug: `if(false) [] else [1,2,3]` previously resolved to UInt8[] instead of Int32[]
+    // when empty array was the first branch in if-else. Now preserves preferred type.
+    [TestCase("y = if(false) [] else [1,2,3]")]
+    [TestCase("y = if(true) [1,2,3] else []")]
+    public void IfElse_EmptyArray_PreservesPreferredType(string expr) {
+        var result = expr.Calc();
+        Assert.AreEqual(new[] { 1, 2, 3 }, result.Get("y"));
+    }
+
+    [Test]
+    public void IfElse_EmptyArrayFirst_TypeIsInt32Array() {
+        var runtime = "y = if(false) [] else [1,2,3]".Build();
+        var yVar = runtime.Variables.Single(v => v.Name == "y");
+        Assert.AreEqual(BaseFunnyType.ArrayOf, yVar.Type.BaseType);
+        Assert.AreEqual(BaseFunnyType.Int32, yVar.Type.ArrayTypeSpecification.FunnyType.BaseType);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Slice with reversed indices should throw consistent error
+    // ═══════════════════════════════════════════════════════════════
+
+    [TestCase("[1,2,3][1:0]")]
+    [TestCase("[1,2,3][2:0]")]
+    [TestCase("[1,2,3][2:1]")]
+    [TestCase("[1,2,3][3:0]")]
+    [TestCase("[1,2,3,4,5][4:1]")]
+    public void SliceReversedIndices_ThrowsConsistentError(string expr) {
+        var runtime = $"y = {expr}".Build();
+        var ex = Assert.Throws<FunnyRuntimeException>(() => runtime.Calc());
+        Assert.That(ex.Message, Does.Contain("Start cannot be more than end"));
+    }
+
+    [TestCase("[1,2,3][1:0:1]")]
+    [TestCase("[1,2,3][2:0:1]")]
+    [TestCase("[1,2,3][2:1:1]")]
+    public void SliceWithStepReversedIndices_ThrowsConsistentError(string expr) {
+        var runtime = $"y = {expr}".Build();
+        var ex = Assert.Throws<FunnyRuntimeException>(() => runtime.Calc());
+        Assert.That(ex.Message, Does.Contain("Start cannot be more than end"));
+    }
+
+    [TestCase("[1,2,3][0:0]", new[] { 1 })]
+    [TestCase("[1,2,3][0:2]", new[] { 1, 2, 3 })]
+    [TestCase("[1,2,3][1:2]", new[] { 2, 3 })]
+    public void SliceValidIndices_StillWorks(string expr, int[] expected) {
+        $"y = {expr}".AssertReturns("y", expected);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Text take/skip clamping beyond length
+    // ═══════════════════════════════════════════════════════════════
+
+    [TestCase("'hello'.take(6)", "hello")]
+    [TestCase("'hello'.take(100)", "hello")]
+    [TestCase("'hello'.take(5)", "hello")]
+    [TestCase("'hello'.take(3)", "hel")]
+    [TestCase("'hello'.take(0)", "")]
+    [TestCase("'hello'.take(1)", "h")]
+    public void TextTake_ClampsBeyondLength(string expr, string expected) {
+        expr.AssertReturns(expected);
+    }
+
+    [TestCase("'hello'.skip(0)", "hello")]
+    [TestCase("'hello'.skip(3)", "lo")]
+    [TestCase("'hello'.skip(5)", "")]
+    [TestCase("'hello'.skip(100)", "")]
+    public void TextSkip_StillWorks(string expr, string expected) {
+        expr.AssertReturns(expected);
+    }
+
+    [TestCase("[1,2,3].take(100)", new[] { 1, 2, 3 })]
+    [TestCase("[1,2,3].take(3)", new[] { 1, 2, 3 })]
+    [TestCase("[1,2,3].take(1)", new[] { 1 })]
+    public void ArrayTake_StillClamps(string expr, int[] expected) {
+        expr.AssertReturns(expected);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Slice with variable start
+    // ═══════════════════════════════════════════════════════════════
+
+    [Test]
+    public void SliceWithVariableStart_ParsedCorrectly() {
+        // Slice is inclusive on both ends: arr[2:4] = [3,4,5] (indices 2,3,4)
+        "arr = [1,2,3,4,5]\r i = 2\r y = arr[i:4]"
+            .AssertResultHas("y", new[] { 3, 4, 5 });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Range without annotation
+    // ═══════════════════════════════════════════════════════════════
+
+    [Test]
+    public void RangeWithoutAnnotation_Works() {
+        "y:int[] = [1..5]".AssertReturns("y", new[]{1,2,3,4,5}); // works WITH annotation
+        Assert.DoesNotThrow(() => "y = [1..5]".Calc()); // works WITHOUT
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Text sort
+    // ═══════════════════════════════════════════════════════════════
+
+    [Test]
+    public void TextSort_DoesNotCrash() {
+        Assert.DoesNotThrow(() => "y = 'cba'.sort()".Calc());
+    }
+
+    // take/skip with negative count emit a clean domain error rather than
+    // leaking the underlying .NET overflow / Array.Copy sourceIndex message.
+    // Mirrors the existing `repeat(_, -1)` contract.
+    [TestCase("out = take([1,2], -1)", "Take count cannot be negative")]
+    [TestCase("out = skip([1,2,3], -1)", "Skip count cannot be negative")]
+    public void TakeOrSkip_NegativeCount_DomainError(string expr, string expectedMessageFragment) {
+        var ex = Assert.Throws<FunnyRuntimeException>(() => expr.Calc());
+        StringAssert.Contains(expectedMessageFragment, ex.Message);
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // MR5Bug1 — Range expression to MaxValue crashes at runtime with
+    //   "Index was outside the bounds of the array". Reproducible for
+    //   every integer type at its max value, and the symmetric descending
+    //   case to MinValue. Range generator likely off-by-one with overflow.
+    // ───────────────────────────────────────────────────────────────
+    [Test]
+    public void MR5Bug1_RangeToMaxValue_Int32() {
+        "out = [2147483646..2147483647]".Calc()
+            .AssertResultHas("out", new[] { 2147483646, 2147483647 });
+    }
+
+    [Test]
+    public void MR5Bug1_RangeDescToMinValue_Int32() {
+        "out = [-2147483647..-2147483648]".Calc()
+            .AssertResultHas("out", new[] { -2147483647, -2147483648 });
+    }
+
+    [Test]
+    public void MR5Bug1_RangeToMaxValue_Int64() {
+        "out = [9223372036854775806..9223372036854775807]".Calc()
+            .AssertResultHas("out", new[] { 9223372036854775806L, 9223372036854775807L });
+    }
+
+    [Test]
+    public void MR5Bug1_RangeToMaxValue_Byte() {
+        "out:byte[] = [254..255]".Calc()
+            .AssertResultHas("out", new byte[] { 254, 255 });
+    }
+
+    [Test]
+    public void MR5Bug1_RangeToMaxValue_Int16() {
+        "out:int16[] = [32766..32767]".Calc()
+            .AssertResultHas("out", new short[] { 32766, 32767 });
+    }
+
+    [Test]
+    public void MR5Bug1_RangeToMaxValue_Int8() {
+        "out:int8[] = [126..127]".Calc()
+            .AssertResultHas("out", new sbyte[] { 126, 127 });
+    }
+
+    [Test, Ignore("Float32 phase 4: Float32 array construction pending")]
+    public void Float32Array_LiteralInit() {
+        "out:float32[] = [1.0, 2.0, 3.0]".Calc()
+            .AssertResultHas("out", new[] { 1.0f, 2.0f, 3.0f });
+    }
+
+    [Test, Ignore("Float32 phase 4: reverse on float32[] pending")]
+    public void Reverse_OfFloat32Array() {
+        Funny.Hardcore.Build("x:float32[]=[1.0,2.0,3.0]\r out=x.reverse()").Calc()
+            .AssertResultHas("out", new[] { 3.0f, 2.0f, 1.0f });
+    }
+
+    [Test]
+    public void Reverse_OfInt8Array() {
+        Funny.Hardcore.Build("x:int8[]=[1,2,3]\r out=x.reverse()").Calc()
+            .AssertResultHas("out", new sbyte[] { 3, 2, 1 });
+    }
+
+    [Test]
+    public void Filter_OfInt8Array() {
+        Funny.Hardcore.Build("x:int8[]=[-2,-1,0,1,2]\r out=x.filter(rule it>0)").Calc()
+            .AssertResultHas("out", new sbyte[] { 1, 2 });
+    }
+
+    [Test]
+    public void Count_OfInt8Array() {
+        Funny.Hardcore.Build("x:int8[]=[1,2,3,4,5]\r out=x.count()").Calc()
+            .AssertResultHas("out", 5);
+    }
+
+    #region FloatFamily dialect
+    // Array of float32 — construction, access, higher-order ops.
+
+    [Test]
+    public void Float32_Array_ExplicitTypeLiteral() {
+        var rt = "out:float32[] = [1.0, 2.0, 3.0]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 2.0f, 3.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_ElementAccess_Index0() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0]\r out = arr[0]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(1.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_ElementAccess_LastIndex() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0]\r out = arr[2]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(3.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Slice_Middle() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0, 4.0, 5.0]\r out = arr[1:3]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 2.0f, 3.0f, 4.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Slice_Prefix() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0, 4.0, 5.0]\r out = arr[:2]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 2.0f, 3.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Slice_Suffix() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0, 4.0, 5.0]\r out = arr[2:]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 3.0f, 4.0f, 5.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Slice_Step() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0, 4.0, 5.0]\r out = arr[::2]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 3.0f, 5.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Concat() {
+        var rt = "a:float32[] = [1.0, 2.0]\r b:float32[] = [3.0, 4.0]\r out = a.concat(b)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 2.0f, 3.0f, 4.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Count() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0]\r out = arr.count()".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(3, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_IntLiteralsInF32Context() {
+        // Int literals in explicitly-typed float32 array context should narrow to f32.
+        var rt = "arr:float32[] = [1, 2, 3]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 2.0f, 3.0f }, rt["arr"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_MixedIntAndReal_TargetF32() {
+        var rt = "arr:float32[] = [1, 2.5, 3]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 2.5f, 3.0f }, rt["arr"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Reverse() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0]\r out = arr.reverse()".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 3.0f, 2.0f, 1.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Filter() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0, 4.0]\r out = arr.filter(rule it > 2.0)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 3.0f, 4.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_MapSquare() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0]\r out = arr.map(rule it * it)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 4.0f, 9.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Contains() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0]\r out = 2.0 in arr".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(true, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_NotContains() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0]\r out = 5.0 in arr".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(false, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Sort() {
+        var rt = "arr:float32[] = [3.0, 1.0, 2.0]\r out = arr.sort()".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 2.0f, 3.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Equality() {
+        var rt = "a:float32[] = [1.0, 2.0]\r b:float32[] = [1.0, 2.0]\r out = a == b".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(true, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Inequality() {
+        var rt = "a:float32[] = [1.0, 2.0]\r b:float32[] = [1.0, 3.0]\r out = a == b".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(false, rt["out"].Value);
+    }
+
+    // 2D array of f32.
+    [Test]
+    public void Float32_TwoDimArray_ElementAccess() {
+        var rt = "m:float32[][] = [[1.0, 2.0],[3.0, 4.0]]\r out = m[1][0]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(3.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_FoldSum() {
+        var rt = "arr:float32[] = [1.0, 2.0, 3.0]\r out = arr.fold(rule it1 + it2)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(6.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Max() {
+        var rt = "arr:float32[] = [1.0, 5.0, 3.0]\r out = arr.max()".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(5.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Array_Min() {
+        var rt = "arr:float32[] = [3.0, 1.0, 5.0]\r out = arr.min()".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(1.0f, rt["out"].Value);
+    }
+
+    // Array element type inferred from function target.
+    [Test]
+    public void Float32_Array_InferredFromFunctionCall() {
+        var rt = "f(a:float32[]):float32 = a[0]\r out = f([1.5, 2.5])".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(1.5f, rt["out"].Value);
+    }
+    #endregion
 }

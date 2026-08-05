@@ -30,6 +30,10 @@ public class TextFunnyArray : IFunnyArray, IComparable {
         if (endIndex == int.MaxValue)
             endIndex = null;
 
+        // Clamp endIndex to valid range
+        if (endIndex.HasValue && endIndex.Value >= _text.Length)
+            endIndex = _text.Length - 1;
+
         if (startIndex > _text.Length - 1)
             return Empty;
 
@@ -81,6 +85,8 @@ public class TextFunnyArray : IFunnyArray, IComparable {
     public IEnumerable<T> As<T>() {
         if (typeof(T) == typeof(char))
             return _text as IEnumerable<T>;
+        if (typeof(T).IsAssignableFrom(typeof(char)))
+            return System.Linq.Enumerable.Select<char, T>(_text, c => (T)(object)c);
         throw new InvalidCastException($"Cannot cast Text to {typeof(T).Name}[]");
     }
 
@@ -101,4 +107,10 @@ public class TextFunnyArray : IFunnyArray, IComparable {
             return t._text == _text;
         return false;
     }
+
+    // Pair the overridden Equals with a consistent hash. Without this, LINQ
+    // set ops backed by HashSet (Union/Intersect/Except/Distinct — used by
+    // unite/intersect/except/unique) bucket equal strings separately and
+    // silently fail to dedup / find duplicates. (Bug II.)
+    public override int GetHashCode() => _text.GetHashCode();
 }

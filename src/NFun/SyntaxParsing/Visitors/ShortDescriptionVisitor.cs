@@ -77,16 +77,16 @@ internal class ShortDescriptionVisitor : ISyntaxNodeVisitor<string> {
     public string Visit(SyntaxTree node) => "Fun equations";
 
     public string Visit(TypedVarDefSyntaxNode node) =>
-        node.FunnyType.BaseType == BaseFunnyType.Empty
+        node.TypeSyntax is TypeSyntax.EmptyType
             ? node.Id
-            : $"{node.Id}:{node.FunnyType}";
+            : $"{node.Id}:{node.TypeSyntax}";
 
     public string Visit(UserFunctionDefinitionSyntaxNode node) => $"{node.Id}(...) = ...";
 
     public string Visit(VarDefinitionSyntaxNode node) =>
-        node.FunnyType.BaseType == BaseFunnyType.Empty
+        node.TypeSyntax is TypeSyntax.EmptyType
             ? node.Id
-            : $"{node.Id}:{node.FunnyType}";
+            : $"{node.Id}:{node.TypeSyntax}";
 
     public string Visit(NamedIdSyntaxNode node) => node.Id;
 
@@ -100,4 +100,9 @@ internal class ShortDescriptionVisitor : ISyntaxNodeVisitor<string> {
         $"{{ {string.Join("; ", node.Fields.Select(f => $"{f.Name}={f.Node.Accept(this)}"))}}}";
 
     public string Visit(DefaultValueSyntaxNode node) => "default";
+    public string Visit(BinOperatorSyntaxNode node) => $"({node.Id})";
+    public string Visit(UnaryOperatorSyntaxNode node) => $"{node.Id}";
+    public string Visit(TypeDeclarationSyntaxNode node) => $"type {node.TypeName}";
+    public string Visit(NamedTypeConstructorSyntaxNode node) => $"{node.TypeName}{{...}}";
+    public string Visit(TryCatchSyntaxNode node) => "try ... catch ...";
 }

@@ -4,6 +4,8 @@ using NUnit.Framework;
 
 namespace NFun.SyntaxTests.BuiltInFunctions;
 
+using Tic;
+
 [TestFixture]
 public class BuiltInFunctionsTest {
     [TestCase("toText([1,2,3])", "[1,2,3]")]
@@ -15,6 +17,17 @@ public class BuiltInFunctionsTest {
     [TestCase("abs(-1.0)", 1.0)]
     [TestCase("abs(0x1-0x4)", 3)]
     [TestCase("15 - min(abs(1-4), 0x7)", 12)]
+    // abs on int8 — single-equation form
+    [TestCase("out:int8 = abs(-5)",  (sbyte)5)]
+    [TestCase("out:int8 = abs(0)",   (sbyte)0)]
+    [TestCase("out:int8 = abs(127)", (sbyte)127)]
+    // sign(T):int32 — returns -1/0/1; constraint is SignedNumber so int8 reachable
+    [TestCase("sign(-5)",   -1)]
+    [TestCase("sign(0)",     0)]
+    [TestCase("sign(5)",     1)]
+    [TestCase("sign(0.0)",   0)]
+    [TestCase("sign(3.14)",  1)]
+    [TestCase("sign(-3.14)",-1)]
     [TestCase("sqrt(0x0)", 0.0)]
     [TestCase("sqrt(1.0)", 1.0)]
     [TestCase("sqrt(4.0)", 2.0)]
@@ -32,6 +45,13 @@ public class BuiltInFunctionsTest {
     [TestCase("round(1.222,2)", 1.22)]
     [TestCase("round(1.66666,0)", 2.0)]
     [TestCase("round(1.2,0)", 1.0)]
+    // Half values: MidpointRounding.AwayFromZero, matching the text format
+    // specifier (`'{0.5:0}'` = `'1'` per Specs/Texts.md L165). Default
+    // Math.Round uses banker's rounding which would give round(0.5,0)=0.
+    [TestCase("round(0.5, 0)", 1.0)]
+    [TestCase("round(-0.5, 0)", -1.0)]
+    [TestCase("round(2.5, 0)", 3.0)]
+    [TestCase("round(-1.5, 0)", -2.0)]
     [TestCase("min(0.5, 1)", 0.5)]
     [TestCase("[1,2,3].count()", 3)]
     [TestCase("['1','2','3'].count()", 3)]
@@ -55,6 +75,7 @@ public class BuiltInFunctionsTest {
     [TestCase("max([1,0.0])", 1.0)]
     [TestCase("max(1.0,3.4)", 3.4)]
     [TestCase("max(0x4,3)", 4)]
+    [TestCase("max('hello','world')", "world")]
     [TestCase("out:int64  = max([1,10,6])", (long)10)]
     [TestCase("out:uint64 = max([1,10,6])", (ulong)10)]
     [TestCase("out:int    = max([1,10,6])", 10)]
@@ -62,6 +83,8 @@ public class BuiltInFunctionsTest {
     [TestCase("out:int16  = max([1,10,6])", (short)10)]
     [TestCase("out:uint16 = max([1,10,6])", (ushort)10)]
     [TestCase("out:byte   = max([1,10,6])", (byte)10)]
+    [TestCase("out:int8   = max([1,10,6])", (sbyte)10)]
+    [TestCase("out:float32 = max([1.0,10.0,6.0])", 10.0f, Ignore = "Float32 phase 4: max generic dispatch for Float32 pending")]
     [TestCase("min([1.0,10.5,6.0])", 1.0)]
     [TestCase("min([0x1,-10,0])", -10)]
     [TestCase("min(1.0,3.4)", 1.0)]
@@ -73,6 +96,8 @@ public class BuiltInFunctionsTest {
     [TestCase("out:int16  = min([1,10,6])", (short)1)]
     [TestCase("out:uint16 = min([1,10,6])", (ushort)1)]
     [TestCase("out:byte   = min([1,10,6])", (byte)1)]
+    [TestCase("out:int8   = min([1,10,6])", (sbyte)1)]
+    [TestCase("out:float32 = min([1.0,10.0,6.0])", 1.0f, Ignore = "Float32 phase 4: min generic dispatch for Float32 pending")]
     [TestCase("median([1.0,10.5,6.0])", 6.0)]
     [TestCase("median([1,-10,0])", 0)]
     [TestCase("median([1])", 1)]
@@ -85,6 +110,7 @@ public class BuiltInFunctionsTest {
     [TestCase("out:int16  = median([1,10,6])", (Int16)6)]
     [TestCase("out:uint16 = median([1,10,6])", (UInt16)6)]
     [TestCase("out:uint8  = median([1,10,6])", (byte)6)]
+    [TestCase("out:int8   = median([1,10,6])", (sbyte)6)]
     [TestCase("[1.0,2.0,3.0].any()", true)]
     [TestCase("['a'].any()", true)]
     [TestCase("[1..10].filter(rule it>3).any()", true)]
@@ -107,6 +133,9 @@ public class BuiltInFunctionsTest {
     [TestCase("out:int16[]  = [4,3,5,1].sort()", new Int16[] { 1, 3, 4, 5 })]
     [TestCase("out:uint16[] = [4,3,5,1].sort()", new UInt16[] { 1, 3, 4, 5 })]
     [TestCase("out:uint8[]  = [4,3,5,1].sort()", new Byte[] { 1, 3, 4, 5 })]
+    [TestCase("out:int8[]   = [4,3,5,1].sort()", new sbyte[] { 1, 3, 4, 5 })]
+    [TestCase("out:float32[] = [4.0,3.0,5.0,1.0].sort()", new float[] { 1.0f, 3.0f, 4.0f, 5.0f }, Ignore = "Float32 phase 4: sort for Float32 pending")]
+    [TestCase("out:float32[] = [4.0,3.0,5.0,1.0].sortDescending()", new float[] { 5.0f, 4.0f, 3.0f, 1.0f }, Ignore = "Float32 phase 4: sortDescending for Float32")]
     [TestCase("['4.0','3.0','5.0','1.0'].sort()", new[] { "1.0", "3.0", "4.0", "5.0" })]
     [TestCase("out:real[]   = range(0,5)", new[] { 0.0, 1, 2, 3, 4, 5 })]
     [TestCase("out:int64[]  = range(0,5)", new long[] { 0, 1, 2, 3, 4, 5 })]
@@ -116,6 +145,12 @@ public class BuiltInFunctionsTest {
     [TestCase("out:int16[]  = range(0,5)", new Int16[] { 0, 1, 2, 3, 4, 5 })]
     [TestCase("out:uint16[] = range(0,5)", new UInt16[] { 0, 1, 2, 3, 4, 5 })]
     [TestCase("out:uint8[]  = range(0,5)", new Byte[] { 0, 1, 2, 3, 4, 5 })]
+    [TestCase("out:int8[]   = range(0,5)", new sbyte[] { 0, 1, 2, 3, 4, 5 })]
+    [TestCase("out:int8[]   = range(-5,5)", new sbyte[] { -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5 })]
+    [TestCase("out:int8[]   = range(5,0)", new sbyte[] { 5, 4, 3, 2, 1, 0 })]
+    [TestCase("out:int8[]   = range(1,10,2)", new sbyte[] { 1, 3, 5, 7, 9 })]
+    [TestCase("out:float32[] = range(0,5)", new float[] { 0, 1, 2, 3, 4, 5 }, Ignore = "Float32 phase 4: range for Float32 pending")]
+    [TestCase("out:float32[] = range(0.0,2.5,0.5)", new float[] { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 2.5f }, Ignore = "Float32 phase 4: range step for Float32 pending")]
     [TestCase("out:real[]   = range(-2.5,2.4)", new[] { -2.5, -1.5, -0.5, 0.5, 1.5 })]
     [TestCase("out:real[]   = range(-2.5,2.5)", new[] { -2.5, -1.5, -0.5, 0.5, 1.5, 2.5 })]
     [TestCase("out:real[]   = range(-2.5,2.6)", new[] { -2.5, -1.5, -0.5, 0.5, 1.5, 2.5 })]
@@ -150,32 +185,35 @@ public class BuiltInFunctionsTest {
     [TestCase("range(7,10.0)", new[] { 7.0, 8, 9, 10 })]
     [TestCase("range(7.0,10.0)", new[] { 7.0, 8, 9, 10 })]
     [TestCase("range(1,10,2.0)", new[] { 1.0, 3.0, 5.0, 7.0, 9.0 })]
-    public void ConstantEquationWithPredefinedFunction(string expr, object expected)
+    public void ConstantEquationWithPredefinedFunction(string expr, object expected) {
+        using var _ = TraceLog.Scope;
+        expr.AssertAnonymousOut(expected);
+    }
+
+    [TestCase("ceil(7.03)", 8.0)]
+    [TestCase("ceil(7.64)", 8.0)]
+    [TestCase("ceil(0.12)", 1.0)]
+    [TestCase("ceil(-0.12)", 0.0)]
+    [TestCase("ceil(-7.1)", -7.0)]
+    [TestCase("ceil(-7.6)", -7.0)]
+    [TestCase("floor(7.03)", 7.0)]
+    [TestCase("floor(7.64)", 7.0)]
+    [TestCase("floor(0.12)", 0.0)]
+    [TestCase("floor(-0.12)", -1.0)]
+    [TestCase("floor(-7.1)", -8.0)]
+    [TestCase("floor(-7.6)", -8.0)]
+    public void CeilFloorConstantEquations(string expr, object expected)
         => expr.AssertAnonymousOut(expected);
 
-    [Ignore("TODO ceil, floor, sign functions are not implemented")]
-    [TestCase("ceil(7.03)", 8)]
-    [TestCase("ceil(7.64)", 8)]
-    [TestCase("ceil(0.12)", 1)]
-    [TestCase("ceil(-0.12)", 0)]
-    [TestCase("ceil(-7.1)", -7)]
-    [TestCase("ceil(-7.6)", -7)]
-    [TestCase("floor(7.03)", 7)]
-    [TestCase("floor(7.64)", 7)]
-    [TestCase("floor(0.12)", 0)]
-    [TestCase("floor(-0.12)", -1)]
-    [TestCase("floor(-7.1)", -8)]
-    [TestCase("floor(-7.6)", -8)]
-    [TestCase("sign(-5)", -1)]
-    [TestCase("sign(-5.0)", -1)]
-    [TestCase("sign(5)", 1)]
-    [TestCase("sign(5.2)", 1)]
-    public void TODOConstantEquationWithPredefinedFunction(string expr, object expected)
-        => expr.AssertAnonymousOut(expected);
-
-    [Ignore("Lca merge")]
+    [TestCase("['a'].sort(rule it)", new[] { "a" })]
+    [TestCase("['a'].sort()", new[] { "a" })]
+    [TestCase("[12].sort(rule it)", new[] { 12 })]
     [TestCase("['a','hey','what','up'].sort(rule it.reverse())", new[] { "a", "up", "what", "hey" })]
-    public void MergeComparableArray(string expr, object expected) => expr.AssertAnonymousOut(expected);
+    [TestCase("['a'].sort(rule it.reverse())", new[] { "a"})]
+    public void MergeComparableArray(string expr, object expected) {
+        using var _ = TraceLog.Scope;
+        expr.AssertAnonymousOut(expected);
+    }
 
     [TestCase((long)42, "x:int64\r y = max(1,x)", (long)42)]
     [TestCase((long)42, "x:int64\r y = min(1,x)", (long)1)]
@@ -215,15 +253,15 @@ public class BuiltInFunctionsTest {
     public void EquationWithPredefinedFunction(string expr, object arg, object expected) =>
         expr.Calc("x", arg).AssertReturns("y", expected);
 
-    [Ignore("TODO: toXXX functions are not implemented")]
+    [Ignore("toInt/toReal/toBits/toBytes/toUnicode/toUtf8 functions are not implemented")]
     [TestCase("y = abs(toInt(x)-toInt(4))", 1, 3)]
     [TestCase("y = abs(x-toInt(4))", 1, 3)]
     [TestCase("x:int; y = abs(toInt(x)-toInt(4))", 1, 3)]
-    public void TODOEquationWithPredefinedFunction(string expr, object arg, object expected) =>
+    public void EquationWithUnimplementedToIntFunction(string expr, object arg, object expected) =>
         expr.Calc("x", arg).AssertReturns("y", expected);
 
 
-    [Ignore(" TODO: converts funct")]
+    [Ignore("toInt/toReal/toBits/toBytes/toUnicode/toUtf8 functions are not implemented")]
     [TestCase("toInt(1.2)", 1)]
     [TestCase("toInt(-1.2)", -1)]
     [TestCase("toInt('1')", 1)]
@@ -251,7 +289,7 @@ public class BuiltInFunctionsTest {
         "toUnicode('hi there')",
         new[] { 0x68, 00, 0x69, 00, 0x20, 00, 0x74, 00, 0x68, 00, 0x65, 00, 0x72, 00, 0x65, 00 })]
     [TestCase("toUtf8('hi there')", new[] { 0x68, 0x69, 0x20, 0x74, 0x68, 0x65, 0x72, 0x65 })]
-    public void TODOConstWithPredefinedFunction(string expr, object expected)
+    public void ToIntToRealToBitsConstants(string expr, object expected)
         => expr.AssertAnonymousOut(expected);
 
     [TestCase("y = pi(")]
@@ -278,14 +316,757 @@ public class BuiltInFunctionsTest {
     [TestCase("y= max(1,2,3)")]
     [TestCase("y= ~1.5")]
     [TestCase("y= max(1,true)")]
+    [TestCase("y= max(1,'test')")]
+    [TestCase("y= max(1,'test'[0])")]
     [TestCase("y= max(1,(j)->j)")]
     public void ObviouslyFails(string expr) => expr.AssertObviousFailsOnParse();
 
-    [Ignore("Todo: have to fail")]
-    [TestCase("y = [1,2] in [1,2,3,4]")]
+    [TestCase("y = [1,2] in [1,2,3,4]")] // FU711 now catches array-in-array type mismatch
     public void TodoObviouslyFails(string expr) => expr.AssertObviousFailsOnParse();
 
-    [Ignore("Todo: have to fail")]
     [TestCase("y= max([])")]
     public void ObviouslyFailsInRuntime(string expr) => expr.AssertObviousFailsOnRuntime();
+
+    [Test]
+    public void BoolToText_ShouldBeLowercase() {
+        "out = true.toText()".Calc().AssertResultHas("out", "true");
+        "out = false.toText()".Calc().AssertResultHas("out", "false");
+    }
+
+    [Test]
+    public void TextInText_ShouldBeTypeError() {
+        Assert.Throws<Exceptions.FunnyParseException>(
+            () => "out = 'h' in 'hello'".Calc());
+    }
+    [TestCase("out:float32 = abs(-5.0)",  5.0f)]
+    [TestCase("out:float32 = abs(0.0)",   0.0f)]
+    [TestCase("out:float32 = abs(3.14)",  3.14f)]
+    [TestCase("sign(-3.14:float32)", -1, Ignore = "inline cast `:float32` syntax not supported")]
+    public void Float32_AbsAndSign(string expr, object expected) =>
+        expr.CalcWithFloats().AssertAnonymousOut(expected);
+
+    [TestCase("out:float32 = sqrt(4.0)",  2.0f)]
+    [TestCase("out:float32 = sqrt(9.0)",  3.0f)]
+    [TestCase("out:float32 = sin(0.0)",   0.0f)]
+    [TestCase("out:float32 = cos(0.0)",   1.0f)]
+    [TestCase("out:float32 = tan(0.0)",   0.0f)]
+    [TestCase("out:float32 = exp(0.0)",   1.0f)]
+    [TestCase("out:float32 = log(1.0)",   0.0f)]
+    [TestCase("out:float32 = log10(1.0)", 0.0f)]
+    [TestCase("out:float32 = log10(100.0)", 2.0f)]
+    [TestCase("out:float32 = asin(0.0)",  0.0f)]
+    [TestCase("out:float32 = acos(1.0)",  0.0f)]
+    [TestCase("out:float32 = atan(0.0)",  0.0f)]
+    [TestCase("out:float32 = atan2(0.0, 1.0)", 0.0f)]
+    [TestCase("out:float32 = ceil(7.03)", 8.0f)]
+    [TestCase("out:float32 = floor(7.6)", 7.0f)]
+    [TestCase("out:float32 = round(1.66666, 1)", 1.7f)]
+    [TestCase("out:float32 = avg([1.0,2.0,6.0])", 3.0f)]
+    [TestCase("out:float32 = 6.0 / 2.0",  3.0f)]
+    public void Float32_GenericMath(string expr, object expected) =>
+        expr.CalcWithFloats().AssertAnonymousOut(expected);
+
+    [TestCase("x:int = 5\rout:float32 = convert(x)",   5.0f)]
+    [TestCase("x:int16 = -5\rout:float32 = convert(x)", -5.0f)]
+    [TestCase("x:int8 = -5\rout:float32 = convert(x)",  -5.0f)]
+    [TestCase("x:byte = 200\rout:float32 = convert(x)", 200.0f)]
+    [TestCase("x:float32 = 1.5\rout:real = convert(x)", 1.5)]
+    [TestCase("x:real = 1.5\rout:float32 = convert(x)", 1.5f)]
+    public void Float32_Convert(string expr, object expected) {
+        var rt = expr.BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(expected, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_LossyFromUInt32_NoThrow() {
+        // 2^25 + 1 = 33554433, but float32 mantissa rounds it to 33554432 (loss of 1).
+        var rt = "x:uint32 = 33554433\rout:float32 = convert(x)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(33554432.0f, rt["out"].Value);  // silent precision loss
+    }
+
+    [Test]
+    public void Float32_LossyFromInt64_NoThrow() {
+        var rt = "x:int64 = 9007199254740993\rout:float32 = convert(x)".BuildWithFloats();
+        rt.Run();
+        // Precision loss expected; just verify no exception and result is float.
+        Assert.IsInstanceOf<float>(rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_LossyFromReal_NoThrow() {
+        // Real has ~15 digits, float32 has ~7. 1.23456789 rounds.
+        var rt = "x:real = 1.23456789\rout:float32 = convert(x)".BuildWithFloats();
+        rt.Run();
+        Assert.IsInstanceOf<float>(rt["out"].Value);
+        Assert.That(System.Math.Abs((float)rt["out"].Value - 1.2345679f), Is.LessThan(0.00001f));
+    }
+
+    [Test]
+    public void Float32_OverflowReal_BecomesInfinity() {
+        // Real value larger than Float32.MaxValue (~3.4e38) → +Infinity per IEEE.
+        var rt = "x:real = 1e40\rout:float32 = convert(x)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(float.PositiveInfinity, rt["out"].Value);
+    }
+
+    [Test]
+    public void OptionalFloat32_HoldsValue() {
+        var rt = Funny.Hardcore
+            .WithDialect(
+                floatFamilySupport: FloatFamilySupport.Float32AndFloat64,
+                optionalTypesSupport: OptionalTypesSupport.Enabled)
+            .Build("out:float32? = 1.5");
+        rt.Run();
+        Assert.AreEqual("Float32?", rt["out"].Type.ToString());
+        Assert.AreEqual(1.5f, rt["out"].Value);
+    }
+
+    [Test]
+    public void OptionalFloat32_HoldsNone() {
+        var rt = Funny.Hardcore
+            .WithDialect(
+                floatFamilySupport: FloatFamilySupport.Float32AndFloat64,
+                optionalTypesSupport: OptionalTypesSupport.Enabled)
+            .Build("out:float32? = none");
+        rt.Run();
+        // None in NFun's output API surfaces as `null` (FunnyNone sentinel
+        // collapses to null at the variable accessor boundary, matching Int8? etc).
+        Assert.IsNull(rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertBool_FromTrue() {
+        var rt = "out:float32 = convert(true)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(1.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertBool_FromFalse() {
+        var rt = "out:float32 = convert(false)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(0.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertToBool_NonZero() {
+        var rt = "x:float32=3.14\rout:bool = convert(x)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(true, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertToBool_Zero() {
+        var rt = "x:float32=0.0\rout:bool = convert(x)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(false, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertToBool_NaN_IsFalse() {
+        // IEEE 754: NaN → false per existing real→bool rule.
+        var rt = "a:float32=0.0\rb:float32=0.0\rnan = a / b\rout:bool = convert(nan)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(false, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertFromText() {
+        var rt = "out:float32 = convert('3.14')".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(3.14f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertToText() {
+        var rt = "x:float32=3.14\rout:text = convert(x)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("3.14", rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertToBytes() {
+        // serialize as 4-byte byte[] (IEEE 754 binary32).
+        var rt = "x:float32=1.0\rout:byte[] = convert(x)".BuildWithFloats();
+        rt.Run();
+        var bytes = (byte[])rt["out"].Value;
+        Assert.AreEqual(4, bytes.Length);
+        Assert.AreEqual(1.0f, System.BitConverter.ToSingle(bytes, 0));
+    }
+
+    [Test]
+    public void Float32_ConvertFromBytes_RoundTrip() {
+        // float32 → byte[4] → float32 round-trip.
+        var rt = "a:float32=2.5\rbytes = convert(a)\rout:float32 = convert(bytes)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(2.5f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ConvertFromChar() {
+        // char → float32: code point as float.
+        var rt = "c = /'A'\rout:float32 = convert(c)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(65.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void OptionalFloat32_NullCoalesce() {
+        var rt = Funny.Hardcore
+            .WithDialect(
+                floatFamilySupport: FloatFamilySupport.Float32AndFloat64,
+                optionalTypesSupport: OptionalTypesSupport.Enabled)
+            .Build("x:float32? = none\rout = x ?? 3.14");
+        rt.Run();
+        // out is whatever ?? resolves to (float32 since left is float32?).
+        Assert.AreEqual(3.14f, rt["out"].Value);
+    }
+
+    // sum / range / range-step on float32.
+    [Test]
+    public void Float32_Sum_Array() {
+        var rt = "x:float32[] = [1.0, 2.5, 6.0]\rout = x.sum()".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(9.5f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Range_Array() {
+        var rt = "out:float32[] = [1.0..3.0]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.0f, 2.0f, 3.0f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_RangeStep_Array() {
+        var rt = "out:float32[] = [0.0..1.0 step 0.5]".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 0.0f, 0.5f, 1.0f }, rt["out"].Value);
+    }
+
+    // toText on float32 uses System.Single.ToString — works automatically.
+    [TestCase("x:float32 = 3.14\rout = x.toText()", "3.14")]
+    [TestCase("x:float32 = -0.5\rout = x.toText()", "-0.5")]
+    public void Float32_ToText(string expr, string expected) {
+        var rt = expr.BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(expected, rt["out"].Value.ToString());
+    }
+
+    [Test]
+    public void Float32_DivByZero_PositiveInfinity() {
+        var rt = "a:float32=5.0\rb:float32=0.0\rout = a / b".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(float.PositiveInfinity, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_DivByZero_NegativeInfinity() {
+        var rt = "a:float32=-5.0\rb:float32=0.0\rout = a / b".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(float.NegativeInfinity, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_ZeroDivZero_IsNaN() {
+        var rt = "a:float32=0.0\rb:float32=0.0\rout = a / b".BuildWithFloats();
+        rt.Run();
+        Assert.IsTrue(float.IsNaN((float)rt["out"].Value));
+    }
+
+    [Test]
+    public void Float32_Sqrt_NegativeIsNaN() {
+        var rt = "a:float32=-1.0\rout = sqrt(a)".BuildWithFloats();
+        rt.Run();
+        Assert.IsTrue(float.IsNaN((float)rt["out"].Value));
+    }
+
+    [Test]
+    public void Float32_Log_ZeroIsNegInfinity() {
+        var rt = "a:float32=0.0\rout = log(a)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(float.NegativeInfinity, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Log_NegativeIsNaN() {
+        var rt = "a:float32=-1.0\rout = log(a)".BuildWithFloats();
+        rt.Run();
+        Assert.IsTrue(float.IsNaN((float)rt["out"].Value));
+    }
+
+    [Test]
+    public void Float32_Asin_OutOfDomainIsNaN() {
+        var rt = "a:float32=2.0\rout = asin(a)".BuildWithFloats();
+        rt.Run();
+        Assert.IsTrue(float.IsNaN((float)rt["out"].Value));
+    }
+
+    [Test]
+    public void Float32_Acos_OutOfDomainIsNaN() {
+        var rt = "a:float32=-2.0\rout = acos(a)".BuildWithFloats();
+        rt.Run();
+        Assert.IsTrue(float.IsNaN((float)rt["out"].Value));
+    }
+
+    [Test]
+    public void Float32_Exp_LargeArgIsInfinity() {
+        var rt = "a:float32=1000.0\rout = exp(a)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(float.PositiveInfinity, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_NaN_NotEqualToItself() {
+        var rt = "a:float32=0.0\rb:float32=0.0\rnan = a / b\rout = nan != nan".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(true, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_NaN_EqualReturnsFalse() {
+        var rt = "a:float32=0.0\rb:float32=0.0\rnan = a / b\rout = nan == nan".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(false, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_NaN_LessThanReturnsFalse() {
+        var rt = "a:float32=0.0\rb:float32=0.0\rnan = a / b\rout = nan < 1.0".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(false, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_PositiveZero_EqualsNegativeZero() {
+        // IEEE 754: +0.0 == -0.0
+        var rt = "pos:float32=0.0\rneg:float32=-0.0\rout = pos == neg".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(true, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Modulus_ByZeroIsNaN() {
+        var rt = "a:float32=5.5\rb:float32=0.0\rout = a % b".BuildWithFloats();
+        rt.Run();
+        Assert.IsTrue(float.IsNaN((float)rt["out"].Value));
+    }
+
+    // min / max on float32[] via IComparable.
+    [Test]
+    public void Float32_MaxArray() {
+        var rt = "x:float32[] = [1.0, 10.0, 6.0]\rout = max(x)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(10.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_MinArray() {
+        var rt = "x:float32[] = [1.0, 10.0, 6.0]\rout = min(x)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(1.0f, rt["out"].Value);
+    }
+
+    [TestCase("x:int8=-128\r out=x.abs()")]
+    [TestCase("x:int16=-32768\r out=x.abs()")]
+    public void Abs_OfMinValue_Throws(string expr) =>
+        Assert.Throws<Exceptions.FunnyRuntimeException>(
+            () => Funny.Hardcore.Build(expr).Calc());
+
+    #region FloatFamily exhaustive
+
+    private const float F32Tol = 1e-6f;
+    private const double F64Tol = 1e-14;
+
+    private static float RunF32(string expr) {
+        var rt = expr.BuildWithFloats();
+        rt.Run();
+        return (float)rt["out"].Value;
+    }
+
+    private static double RunF64(string expr) {
+        var rt = expr.BuildWithFloats();
+        rt.Run();
+        return (double)rt["out"].Value;
+    }
+
+    private static object RunAny(string expr) {
+        var rt = expr.BuildWithFloats();
+        rt.Run();
+        return rt["out"].Value;
+    }
+
+    private static void AssertApproxF32(float expected, float actual, float tol = F32Tol) =>
+        Assert.That(Math.Abs(actual - expected), Is.LessThan(tol),
+            $"expected≈{expected}, got {actual}");
+
+    private static void AssertApproxF64(double expected, double actual, double tol = F64Tol) =>
+        Assert.That(Math.Abs(actual - expected), Is.LessThan(tol),
+            $"expected≈{expected}, got {actual}");
+
+    // ─── sqrt ───
+    [TestCase("out:float32 = sqrt(16.0)", 4.0f)]
+    [TestCase("out:float32 = sqrt(0.0)", 0.0f)]
+    [TestCase("out:float32 = sqrt(1.0)", 1.0f)]
+    // ─── sin / cos / tan ───
+    [TestCase("out:float32 = sin(0.0)", 0.0f)]
+    [TestCase("out:float32 = cos(0.0)", 1.0f)]
+    [TestCase("out:float32 = tan(0.0)", 0.0f)]
+    // ─── asin / acos / atan ───
+    [TestCase("out:float32 = asin(0.0)", 0.0f)]
+    [TestCase("out:float32 = acos(1.0)", 0.0f)]
+    [TestCase("out:float32 = atan(0.0)", 0.0f)]
+    // ─── atan2 (2-arg) ───
+    [TestCase("out:float32 = atan2(0.0, 1.0)", 0.0f)]
+    // ─── exp / log ───
+    [TestCase("out:float32 = exp(0.0)", 1.0f)]
+    [TestCase("a:float32 = -1000.0\rout = exp(a)", 0.0f)]  // exp of large negative underflows to zero
+    [TestCase("out:float32 = log(1.0)", 0.0f)]
+    // ─── ceil / floor ───
+    [TestCase("out:float32 = ceil(3.14)", 4.0f)]
+    [TestCase("out:float32 = ceil(0.0)", 0.0f)]
+    [TestCase("out:float32 = ceil(-3.14)", -3.0f)]
+    [TestCase("out:float32 = ceil(5.0)", 5.0f)]   // integer-valued
+    [TestCase("out:float32 = floor(3.99)", 3.0f)]
+    [TestCase("out:float32 = floor(0.0)", 0.0f)]
+    [TestCase("out:float32 = floor(-3.14)", -4.0f)]
+    [TestCase("out:float32 = floor(5.0)", 5.0f)]  // integer-valued
+    // ─── round (2-arg). MidpointRounding.AwayFromZero. ───
+    [TestCase("out:float32 = round(1.66666, 1)", 1.7f)]
+    [TestCase("out:float32 = round(1.222, 2)", 1.22f)]
+    [TestCase("out:float32 = round(1.66666, 0)", 2.0f)]
+    [TestCase("out:float32 = round(0.5, 0)", 1.0f)]    // half up positive
+    [TestCase("out:float32 = round(-0.5, 0)", -1.0f)]  // half up negative
+    [TestCase("out:float32 = round(2.5, 0)", 3.0f)]
+    [TestCase("out:float32 = round(0.0, 2)", 0.0f)]
+    // ─── avg (Floats) ───
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout = avg(x)", 2.0f)]
+    [TestCase("x:float32[] = [5.0]\rout = avg(x)", 5.0f)]
+    [TestCase("x:float32[] = [-1.0, 0.0, 1.0]\rout = avg(x)", 0.0f)]
+    [TestCase("x:float32[] = [2.5, 2.5, 2.5]\rout = avg(x)", 2.5f)]
+    // ─── sum ───
+    [TestCase("x:float32[] = [5.0]\rout = sum(x)", 5.0f)]
+    [TestCase("x:float32[] = [-1.0, -2.0, -3.0]\rout = sum(x)", -6.0f)]
+    [TestCase("x:float32[] = [-2.5, 2.5]\rout = sum(x)", 0.0f)]
+    [TestCase("x:float32[] = [0.0, 0.0, 0.0]\rout = sum(x)", 0.0f)]
+    // ─── min / max (Comparable) ───
+    [TestCase("x:float32[] = [5.0]\rout = min(x)", 5.0f)]
+    [TestCase("x:float32[] = [1.0, 1.0, 1.0]\rout = min(x)", 1.0f)]
+    [TestCase("x:float32[] = [-1.0, -10.0, -5.0]\rout = min(x)", -10.0f)]
+    [TestCase("x:float32[] = [5.0]\rout = max(x)", 5.0f)]
+    [TestCase("x:float32[] = [1.0, 1.0, 1.0]\rout = max(x)", 1.0f)]
+    [TestCase("x:float32[] = [-1.0, -10.0, -5.0]\rout = max(x)", -1.0f)]
+    [TestCase("x:float32[] = [-5.0, 3.0, -1.0]\rout = max(x)", 3.0f)]
+    [TestCase("x:float32[] = [-5.0, 3.0, -1.0]\rout = min(x)", -5.0f)]
+    // min/max 2-arg
+    [TestCase("out:float32 = max(1.0, 3.4)", 3.4f)]
+    [TestCase("out:float32 = min(1.0, 3.4)", 1.0f)]
+    [TestCase("out:float32 = max(2.0, 2.0)", 2.0f)]
+    [TestCase("out:float32 = min(2.0, 2.0)", 2.0f)]
+    // ─── median (Comparable) ───
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout = median(x)", 2.0f)]
+    [TestCase("x:float32[] = [5.0]\rout = median(x)", 5.0f)]
+    [TestCase("x:float32[] = [-1.0, 0.0, 1.0]\rout = median(x)", 0.0f)]
+    [TestCase("x:float32[] = [5.0, 1.0, 3.0]\rout = median(x)", 3.0f)]  // unsorted
+    // ─── fold / first / last on float32[] ───
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout:float32 = x.fold(rule it1 + it2)", 6.0f)]
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout:float32 = x.fold(10.0, rule it1 + it2)", 16.0f)]
+    [TestCase("x:float32[] = [1.5, 2.5, 3.5]\rout:float32 = x.first()", 1.5f)]
+    [TestCase("x:float32[] = [1.5, 2.5, 3.5]\rout:float32 = x.last()", 3.5f)]
+    // ─── Real-divide (`/`) explicit — generic over Floats ───
+    [TestCase("a:float32=5.0\rb:float32=2.0\rout = a / b", 2.5f)]
+    [TestCase("a:float32=3.14\rb:float32=1.0\rout = a / b", 3.14f)]
+    [TestCase("a:float32=-4.0\rb:float32=-2.0\rout = a / b", 2.0f)]
+    public void Float32_ReturnsExact(string expr, float expected) =>
+        Assert.AreEqual(expected, RunF32(expr));
+
+    // ─── sqrt ───
+    [TestCase("a:float32=1e-6\rout = sqrt(a)", 0.001f)]
+    // ─── sin / cos / tan ───
+    [TestCase("a:float32=1.5707963\rout = sin(a)", 1.0f)]
+    [TestCase("a:float32=3.14159265\rout = sin(a)", 0.0f, 1e-5f)]
+    [TestCase("a:float32=-1.5707963\rout = sin(a)", -1.0f)]
+    [TestCase("a:float32=3.14159265\rout = cos(a)", -1.0f, 1e-5f)]
+    [TestCase("a:float32=1.5707963\rout = cos(a)", 0.0f, 1e-5f)]
+    [TestCase("a:float32=0.78539816\rout = tan(a)", 1.0f)]
+    [TestCase("a:float32=-0.78539816\rout = tan(a)", -1.0f)]
+    // ─── asin / acos / atan ───
+    // Expected literals below are bit-exact equivalents of the Math-based
+    // constants they replace: 1.5707964f == (float)(Math.PI / 2),
+    // 3.1415927f == (float)Math.PI, 0.7853982f == (float)(Math.PI / 4),
+    // 2.7182817f == (float)Math.E, 0.36787945f == 1.0f / (float)Math.E.
+    [TestCase("out:float32 = asin(1.0)", 1.5707964f)]
+    [TestCase("out:float32 = asin(-1.0)", -1.5707964f)]
+    [TestCase("out:float32 = asin(0.5)", 0.5235988f)]
+    [TestCase("out:float32 = acos(0.0)", 1.5707964f)]
+    [TestCase("out:float32 = acos(-1.0)", 3.1415927f)]
+    [TestCase("out:float32 = atan(1.0)", 0.7853982f)]
+    [TestCase("out:float32 = atan(-1.0)", -0.7853982f)]
+    // ─── atan2 (2-arg) ───
+    [TestCase("out:float32 = atan2(1.0, 1.0)", 0.7853982f)]
+    [TestCase("out:float32 = atan2(1.0, 0.0)", 1.5707964f)]
+    [TestCase("out:float32 = atan2(-1.0, 0.0)", -1.5707964f)]
+    [TestCase("out:float32 = atan2(0.0, -1.0)", 3.1415927f)]
+    // ─── exp / log / log10 / log(x, base) ───
+    [TestCase("out:float32 = exp(1.0)", 2.7182817f)]
+    [TestCase("out:float32 = exp(-1.0)", 0.36787945f)]
+    [TestCase("a:float32 = 2.7182818\rout = log(a)", 1.0f)]
+    [TestCase("out:float32 = log10(10.0)", 1.0f)]
+    [TestCase("out:float32 = log10(100.0)", 2.0f)]
+    [TestCase("out:float32 = log10(0.1)", -1.0f)]
+    [TestCase("out:float32 = log(8.0, 2.0)", 3.0f)]
+    [TestCase("out:float32 = log(100.0, 10.0)", 2.0f)]
+    public void Float32_ReturnsApprox(string expr, float expected, float tol = F32Tol) =>
+        AssertApproxF32(expected, RunF32(expr), tol);
+
+    [Test] public void Float32_sqrt_maxvalue_no_overflow() =>
+        Assert.IsFalse(float.IsInfinity(RunF32("a:float32 = 1e30\rout = sqrt(a)")));
+
+
+    [TestCase("out:real = sqrt(16.0)", 4.0)]
+    [TestCase("out:real = sqrt(0.0)", 0.0)]
+    [TestCase("out:real = sin(0.0)", 0.0)]
+    [TestCase("out:real = cos(0.0)", 1.0)]
+    [TestCase("out:real = tan(0.0)", 0.0)]
+    [TestCase("out:real = acos(1.0)", 0.0)]
+    [TestCase("out:real = atan2(0.0, 0.0)", 0.0)]
+    [TestCase("out:real = exp(0.0)", 1.0)]
+    [TestCase("out:real = log(1.0)", 0.0)]
+    [TestCase("a:real = 0.0\rout = log(a)", double.NegativeInfinity)]
+    [TestCase("out:real = ceil(3.14)", 4.0)]
+    [TestCase("out:real = floor(-3.14)", -4.0)]
+    // round (2-arg). MidpointRounding.AwayFromZero.
+    [TestCase("out:real = round(0.5, 0)", 1.0)]
+    [TestCase("out:real = round(-0.5, 0)", -1.0)]
+    // aggregates
+    [TestCase("x:real[] = [1.0, 2.0, 3.0]\rout = avg(x)", 2.0)]
+    [TestCase("x:real[] = [5.0]\rout = avg(x)", 5.0)]
+    [TestCase("x:real[] = [1.0, 2.5, 6.0]\rout = sum(x)", 9.5)]
+    [TestCase("x:real[] = [5.0]\rout = sum(x)", 5.0)]
+    [TestCase("x:real[] = [1.0, 10.0, 6.0]\rout = min(x)", 1.0)]
+    [TestCase("x:real[] = [1.0, 10.0, 6.0]\rout = max(x)", 10.0)]
+    [TestCase("x:real[] = [1.0, 10.5, 6.0]\rout = median(x)", 6.0)]
+    [TestCase("x:real[] = [1.0]\rout = median(x)", 1.0)]
+    // real-divide
+    [TestCase("a:real=5.0\rb:real=2.0\rout = a / b", 2.5)]
+    public void Float64_ReturnsExact(string expr, double expected) =>
+        Assert.AreEqual(expected, RunF64(expr));
+
+
+    // Expected literals below are bit-exact equivalents of the Math-based
+    // constants they replace: 1.4142135623730951 == Math.Sqrt(2.0),
+    // 1.5707963267948966 == Math.PI / 2, 0.7853981633974483 == Math.PI / 4,
+    // 2.718281828459045 == Math.E.
+    [TestCase("out:real = sqrt(2.0)", 1.4142135623730951)]
+    [TestCase("out:real = sin(3.141592653589793/2.0)", 1.0)]
+    [TestCase("out:real = cos(3.141592653589793)", -1.0)]
+    [TestCase("out:real = tan(3.141592653589793/4.0)", 1.0)]
+    [TestCase("out:real = asin(1.0)", 1.5707963267948966)]
+    [TestCase("out:real = atan(1.0)", 0.7853981633974483)]
+    [TestCase("out:real = atan2(1.0, 1.0)", 0.7853981633974483)]
+    [TestCase("out:real = exp(1.0)", 2.718281828459045)]
+    [TestCase("out:real = log10(1000.0)", 3.0)]
+    [TestCase("out:real = log(1024.0, 2.0)", 10.0)]
+    [TestCase("out:real = round(1.66666, 1)", 1.7)]
+    public void Float64_ReturnsApprox(string expr, double expected) =>
+        AssertApproxF64(expected, RunF64(expr));
+
+    [TestCase("a:real = -1.0\rout = sqrt(a)")]
+    [TestCase("a:real = 2.0\rout = asin(a)")]
+    [TestCase("a:real = -2.0\rout = acos(a)")]
+    public void Float64_ResultIsNaN(string expr) =>
+        Assert.IsTrue(double.IsNaN(RunF64(expr)));
+
+    [TestCase("x:float32[] = []\rout = avg(x)")]
+    [TestCase("x:real[] = []\rout = avg(x)")]
+    [TestCase("x:real[] = []\rout = min(x)")]
+    [TestCase("x:real[] = []\rout = max(x)")]
+    public void FloatFamily_EmptyAggregation_Throws(string expr) =>
+        Assert.Throws<Exceptions.FunnyRuntimeException>(() => {
+            var rt = expr.BuildWithFloats();
+            rt.Run();
+        });
+
+
+    // ─── sort / sortDescending ───
+    [TestCase("x:float32[] = [4.0, 3.0, 5.0, 1.0]\rout:float32[] = x.sort()", new[] { 1.0f, 3.0f, 4.0f, 5.0f })]
+    [TestCase("x:float32[] = [4.0, 3.0, 5.0, 1.0]\rout:float32[] = x.sortDescending()", new[] { 5.0f, 4.0f, 3.0f, 1.0f })]
+    [TestCase("x:float32[] = [-1.0, -10.0, 5.0, 0.0]\rout:float32[] = x.sort()", new[] { -10.0f, -1.0f, 0.0f, 5.0f })]
+    [TestCase("x:float32[] = [7.5]\rout:float32[] = x.sort()", new[] { 7.5f })]
+    // ─── range / range-step ───
+    [TestCase("out:float32[] = range(0.0, 5.0)", new[] { 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f })]
+    [TestCase("out:float32[] = range(0.0, 1.0, 0.25)", new[] { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })]
+    [TestCase("out:float32[] = range(5.0, 0.0)", new[] { 5.0f, 4.0f, 3.0f, 2.0f, 1.0f, 0.0f })]
+    [TestCase("out:float32[] = range(1.0, 0.0, 0.25)", new[] { 1.0f, 0.75f, 0.5f, 0.25f, 0.0f })]
+    // ─── Array element operations — HOFs on float32[] ───
+    [TestCase("x:float32[] = [1.0, -2.0, 3.0, -4.0]\rout:float32[] = x.filter(rule it > 0.0)", new[] { 1.0f, 3.0f })]
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout:float32[] = x.filter(rule it > 10.0)", new float[0])]
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout:float32[] = x.map(rule it * 2.0)", new[] { 2.0f, 4.0f, 6.0f })]
+    [TestCase("x:float32[] = [1.0, -2.0, 3.0]\rout:float32[] = x.map(rule -it)", new[] { -1.0f, 2.0f, -3.0f })]
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout:float32[] = x.reverse()", new[] { 3.0f, 2.0f, 1.0f })]
+    [TestCase("a:float32[] = [1.0, 2.0]\rb:float32[] = [3.0, 4.0]\rout:float32[] = concat(a, b)", new[] { 1.0f, 2.0f, 3.0f, 4.0f })]
+    public void Float32_ReturnsArray(string expr, float[] expected) {
+        var rt = expr.BuildWithFloats();
+        rt.Run();
+        CollectionAssert.AreEqual(expected, (System.Collections.IEnumerable)rt["out"].Value);
+    }
+
+    [TestCase("x:real[] = [4.0, 3.0, 5.0, 1.0]\rout:real[] = x.sort()", new[] { 1.0, 3.0, 4.0, 5.0 })]
+    [TestCase("x:real[] = [4.0, 3.0, 5.0, 1.0]\rout:real[] = x.sortDescending()", new[] { 5.0, 4.0, 3.0, 1.0 })]
+    [TestCase("out:real[] = range(0.0, 3.0)", new[] { 0.0, 1.0, 2.0, 3.0 })]
+    [TestCase("out:real[] = range(0.0, 1.0, 0.25)", new[] { 0.0, 0.25, 0.5, 0.75, 1.0 })]
+    public void Float64_ReturnsArray(string expr, double[] expected) {
+        var rt = expr.BuildWithFloats();
+        rt.Run();
+        CollectionAssert.AreEqual(expected, (System.Collections.IEnumerable)rt["out"].Value);
+    }
+
+    // ─── convert: numeric source types → float32 (positive & negative where signed) ───
+    [TestCase("x:int = 42\rout:float32 = convert(x)", 42.0f)]
+    [TestCase("x:int = -42\rout:float32 = convert(x)", -42.0f)]
+    [TestCase("x:int = 0\rout:float32 = convert(x)", 0.0f)]
+    [TestCase("x:int16 = 30000\rout:float32 = convert(x)", 30000.0f)]
+    [TestCase("x:int16 = -30000\rout:float32 = convert(x)", -30000.0f)]
+    [TestCase("x:int8 = 100\rout:float32 = convert(x)", 100.0f)]
+    [TestCase("x:int8 = -100\rout:float32 = convert(x)", -100.0f)]
+    [TestCase("x:int64 = 1000000\rout:float32 = convert(x)", 1000000.0f)]
+    [TestCase("x:int64 = -1000000\rout:float32 = convert(x)", -1000000.0f)]
+    [TestCase("x:byte = 255\rout:float32 = convert(x)", 255.0f)]
+    [TestCase("x:uint16 = 65535\rout:float32 = convert(x)", 65535.0f)]
+    [TestCase("x:uint32 = 4000000\rout:float32 = convert(x)", 4000000.0f)]
+    [TestCase("x:uint64 = 1000000\rout:float32 = convert(x)", 1000000.0f)]
+    // ─── convert: float32 → each numeric target ───
+    // float32 → integer: truncation toward zero (spec Functions.md convert matrix "fractional
+    // part silently truncated"). Same as real → integer; matches C/Java/Go/Rust cast semantics.
+    [TestCase("x:float32 = 3.9\rout:int = convert(x)", 3)]
+    [TestCase("x:float32 = -3.9\rout:int = convert(x)", -3)]
+    [TestCase("x:float32 = 5.0\rout:int = convert(x)", 5)]
+    [TestCase("x:float32 = 0.0\rout:int = convert(x)", 0)]
+    [TestCase("x:float32 = 42.7\rout:int16 = convert(x)", (short)42)]
+    [TestCase("x:float32 = 42.0\rout:int16 = convert(x)", (short)42)]
+    [TestCase("x:float32 = -5.7\rout:int8 = convert(x)", (sbyte)-5)]
+    [TestCase("x:float32 = -5.0\rout:int8 = convert(x)", (sbyte)-5)]
+    [TestCase("x:float32 = 100000.7\rout:int64 = convert(x)", 100000L)]
+    [TestCase("x:float32 = 100000.0\rout:int64 = convert(x)", 100000L)]
+    [TestCase("x:float32 = 200.7\rout:byte = convert(x)", (byte)200)]
+    [TestCase("x:float32 = 200.0\rout:byte = convert(x)", (byte)200)]
+    [TestCase("x:float32 = 60000.9\rout:uint16 = convert(x)", (ushort)60000)]
+    [TestCase("x:float32 = 60000.0\rout:uint16 = convert(x)", (ushort)60000)]
+    [TestCase("x:float32 = 4000000.7\rout:uint32 = convert(x)", 4000000u)]
+    [TestCase("x:float32 = 4000000.0\rout:uint32 = convert(x)", 4000000u)]
+    [TestCase("x:float32 = 1000000.9\rout:uint64 = convert(x)", 1000000UL)]
+    [TestCase("x:float32 = 1000000.0\rout:uint64 = convert(x)", 1000000UL)]
+    // ─── count on float32[] ───
+    [TestCase("x:float32[] = [1.0, -2.0, 3.0, -4.0, 5.0]\rout = x.count(rule it > 0.0)", 3)]
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0, 4.0]\rout = x.count()", 4)]
+    // ─── Boundary values — Float32 MinValue/MaxValue/precision limit ───
+    // Float32.MaxValue ≈ 3.4028235e38. Written as real then converted narrows exactly.
+    [TestCase("x:real = 3.4028235e38\rout:float32 = convert(x)", float.MaxValue)]
+    // Float32.MinValue ≈ -3.4028235e38.
+    [TestCase("x:real = -3.4028235e38\rout:float32 = convert(x)", float.MinValue)]
+    // 2^24 = 16777216 is exactly representable.
+    [TestCase("x:int = 16777216\rout:float32 = convert(x)", 16777216.0f)]
+    // 2^24 + 1 = 16777217 is NOT representable → rounds to 16777216.
+    [TestCase("x:int = 16777217\rout:float32 = convert(x)", 16777216.0f)]
+    public void Float32_ReturnsValue(string expr, object expected) =>
+        Assert.AreEqual(expected, RunAny(expr));
+
+    [Test] public void Float32_convert_to_real_widens() =>
+        AssertApproxF64(2.5, (double)RunAny("x:float32 = 2.5\rout:real = convert(x)"), 1e-6);
+
+    [Test]
+    public void Float32_epsilon_smallest_positive_survives_convert() {
+        // A very small positive real → convert to float32 → still positive nonzero.
+        // 1e-40 is denormalized in float32 but not zero.
+        var rt = "x:real = 1e-40\rout:float32 = convert(x)".BuildWithFloats();
+        rt.Run();
+        var v = (float)rt["out"].Value;
+        Assert.That(v, Is.GreaterThan(0.0f), "denormal preserved");
+        Assert.That(v, Is.LessThan(1e-30f));
+    }
+
+    // (1.5, 2.5)
+    [TestCase("a:float32=1.5\rb:float32=2.5\rout = a < b", true)]
+    [TestCase("a:float32=1.5\rb:float32=2.5\rout = a > b", false)]
+    [TestCase("a:float32=1.5\rb:float32=2.5\rout = a <= b", true)]
+    [TestCase("a:float32=1.5\rb:float32=2.5\rout = a >= b", false)]
+    [TestCase("a:float32=1.5\rb:float32=2.5\rout = a == b", false)]
+    [TestCase("a:float32=1.5\rb:float32=2.5\rout = a != b", true)]
+    // (1.5, 1.5)
+    [TestCase("a:float32=1.5\rb:float32=1.5\rout = a == b", true)]
+    [TestCase("a:float32=1.5\rb:float32=1.5\rout = a != b", false)]
+    [TestCase("a:float32=1.5\rb:float32=1.5\rout = a <= b", true)]
+    [TestCase("a:float32=1.5\rb:float32=1.5\rout = a >= b", true)]
+    // NaN comparison semantics (IEEE 754 unordered → false)
+    [TestCase("a:float32=0.0\rb:float32=0.0\rnan = a / b\rout = nan < 1.0", false)]
+    [TestCase("a:float32=0.0\rb:float32=0.0\rnan = a / b\rout = nan > 1.0", false)]
+    [TestCase("a:float32=0.0\rb:float32=0.0\rnan = a / b\rout = nan <= 1.0", false)]
+    [TestCase("a:float32=0.0\rb:float32=0.0\rnan = a / b\rout = nan >= 1.0", false)]
+    // ─── any / all with predicate on float32[] ───
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout = x.any(rule it > 2.5)", true)]
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout = x.any(rule it > 10.0)", false)]
+    [TestCase("x:float32[] = [1.0, 2.0, 3.0]\rout = x.all(rule it > 0.0)", true)]
+    [TestCase("x:float32[] = [1.0, -2.0, 3.0]\rout = x.all(rule it > 0.0)", false)]
+    public void Float32_ReturnsBool(string expr, bool expected) =>
+        Assert.AreEqual(expected, RunAny(expr));
+
+    [TestCase("x:float32 = 0.0\rout = x.toText()", "0")]
+    [TestCase("x:float32 = 5.0\rout = x.toText()", "5")]   // integer-valued
+    // NFun uses `∞`/`-∞`/`NaN` symbols (Specs/Texts.md) rather than the CLR default strings.
+    [TestCase("a:float32=1.0\rb:float32=0.0\rout = (a / b).toText()", "∞")]
+    [TestCase("a:float32=-1.0\rb:float32=0.0\rout = (a / b).toText()", "-∞")]
+    // format masks
+    [TestCase("x:float32 = 3.14159\rout = '{x:0.00}'", "3.14")]
+    [TestCase("x:float32 = 42.0\rout = '{x:0000}'", "0042")]
+    public void Float32_ReturnsText(string expr, string expected) =>
+        Assert.AreEqual(expected, RunAny(expr));
+
+    [Test] public void Float32_toText_nan() {
+        var s = (string)RunAny("a:float32=0.0\rb:float32=0.0\rout = (a / b).toText()");
+        Assert.IsNotEmpty(s);
+        StringAssert.AreEqualIgnoringCase("NaN", s);
+    }
+
+    [TestCase("x:float32 = 3.14\rout = x.toHexText()")]
+    [TestCase("x:float32 = 3.14\rout = x.toBinText()")]
+    public void Float32_IntegerOnlyTextFunction_Rejected(string expr) =>
+        Assert.Throws<Exceptions.FunnyParseException>(() => {
+            var rt = expr.BuildWithFloats();
+            rt.Run();
+        });
+
+    [Test]
+    public void Mixed_Float32_And_Real_Widens_To_Real() {
+        var rt = "x:float32 = 1.5\ry:real = 2.5\rout = x + y".BuildWithFloats();
+        rt.Run();
+        Assert.IsInstanceOf<double>(rt["out"].Value);
+        Assert.AreEqual(4.0, (double)rt["out"].Value);
+    }
+
+    // Format specifier on float32 negative-zero and Inf display:
+    // -0.0 default formats as "0" or "-0" depending on culture, Infinity is
+    // culture-dependent too — assert non-throwing and non-empty.
+    [TestCase("x:float32 = -0.0\rout = '{x}'")]
+    [TestCase("a:float32 = 1.0\rb:float32 = 0.0\rout = '{a/b}'")]
+    public void Float32_Format_NonEmpty(string expr) {
+        var rt = expr.BuildWithFloats();
+        rt.Run();
+        Assert.IsNotEmpty((string)rt["out"].Value);
+    }
+
+    // Sci format for float32
+    [Test]
+    public void Float32_Format_Scientific() {
+        var rt = "x:float32 = 314.159\rout = '{x:sci}'".BuildWithFloats();
+        rt.Run();
+        // Format is `1.234567e+002`-style (see FormatSpecifierTest). Just verify shape.
+        var s = (string)rt["out"].Value;
+        StringAssert.Contains("e", s.ToLowerInvariant());
+    }
+    #endregion FloatFamily exhaustive
 }

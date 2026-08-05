@@ -3,8 +3,11 @@ using NUnit.Framework;
 
 namespace NFun.SyntaxTests.BuiltInFunctions;
 
+using Tic;
+
 class LinqFunctionsTest {
     [TestCase("y:int = [0,7,1,2,3] . fold(max)", 7)]
+    [TestCase("y:int = [1] . fold(max)", 1)]
     [TestCase("y:int = [0x0,7,1,2,3] . fold(rule(a,b)= a+b)", 13)]
     [TestCase("y = [0.0,7.0,1.0,2.0,3.0] . fold(rule(a,b)= a+b)", 13.0)]
     [TestCase(
@@ -55,7 +58,7 @@ class LinqFunctionsTest {
     [TestCase("y:int = [1,2,3,4,5,6,7].filter(rule it%2==0).fold(rule 0)", 0)]
     [TestCase("y:int = [1,2,3,4,5,6,7].filter((rule it%2==0)).fold(rule 0)", 0)]
     public void HiOrderFunConstantEquatation(string expr, object expected)
-        => expr.AssertReturns("y", expected);
+        => TraceLog.WithTrace(()=>expr.AssertReturns("y", expected));
 
     [TestCase("y:int[] = take([1,2,3,4,5],3)", new[] { 1, 2, 3 })]
     [TestCase("y = take([1.0,2.0,3.0,4.0,5.0],4)", new[] { 1.0, 2.0, 3.0, 4.0 })]
@@ -97,6 +100,14 @@ class LinqFunctionsTest {
     [TestCase("y = []. except([])", new object[0])]
     [TestCase("y = [1.0,2.0] . except([3.0,4.0])", new[] { 1.0, 2.0 })]
     [TestCase("y = [1.0,2.0,3.0].except([3.0,4.0])", new[] { 1.0, 2.0 })]
+    // Text-element coverage: HashSet-backed LINQ Union/Intersect/Except/Distinct
+    // require Equals + GetHashCode to be consistent. TextFunnyArray previously
+    // overrode only Equals — equal strings bucketed separately → silent wrong
+    // results (duplicates kept, intersections empty, etc.).
+    [TestCase("y = ['hello','world'].unite(['world','foo'])", new[] { "hello", "world", "foo" })]
+    [TestCase("y = ['hello','world'].intersect(['world','foo'])", new[] { "world" })]
+    [TestCase("y = ['hello','world'].except(['world','foo'])", new[] { "hello" })]
+    [TestCase("y = ['ab','cd','ab'].unique([])", new[] { "ab", "cd" })]
     [TestCase("y = find([1,2,3], 2)", 1)]
     [TestCase("y = find([1,2,3], 4)", -1)]
     [TestCase("y = find([1,2,-4], -4)", 2)]
@@ -132,7 +143,7 @@ class LinqFunctionsTest {
     [TestCase("y = [42].chunk(1) == [[42]]", true)]
     [TestCase("y = [1,2,3,4,5].chunk(2) == [[1,2],[3,4],[5]]", true)]
 
-    [TestCase("y = [true,false,true].map(toText).join(', ')", "True, False, True")]
+    [TestCase("y = [true,false,true].map(toText).join(', ')", "true, false, true")]
     [TestCase("y = [1,2,3,4].map(toText).join(', ')", "1, 2, 3, 4")]
     [TestCase("y = ['1','2','3','4'].join(', ')", "1, 2, 3, 4")]
     [TestCase("y = ['1','2','3','4'].join(',')", "1,2,3,4")]
@@ -158,4 +169,12 @@ class LinqFunctionsTest {
         @"iSum(r:int, x:int):int = r+x
                      y = fold([100][1:1], iSum)")]
     public void FailsOnRuntime(string expr) => expr.AssertObviousFailsOnRuntime();
+
+    // FU711 negatives — same structural depth for T across all args, must resolve cleanly.
+    [TestCase("y = concat('abc', 'def')", "abcdef")]
+    [TestCase("y = [1, 2, 3].map(rule it * 2)", new[] { 2, 4, 6 })]
+    [TestCase("y = [1, 2, 3].filter(rule it > 1)", new[] { 2, 3 })]
+    [TestCase("y = [1,2,3].fold(rule it1 + it2)", 6)]
+    public void DepthConsistent_ResolvesGeneric(string expr, object expected) =>
+        expr.AssertReturns("y", expected);
 }

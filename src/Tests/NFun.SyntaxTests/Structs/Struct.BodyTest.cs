@@ -1,6 +1,6 @@
 using System.Linq;
+using NFun.Exceptions;
 using NFun.TestTools;
-using NFun.Tic;
 using NUnit.Framework;
 
 namespace NFun.SyntaxTests.Structs;
@@ -15,12 +15,7 @@ public class StructBodyTest {
             .Calc()
             .AssertReturns("y", new { a = 1.0 });
 
-    [Ignore("Lca calculation")]
-    [TestCase("y = [{a =1.0},{id = 31},{id = 42}][0]")]
-    public void StructLca(string expr) =>
-        expr
-            .Calc()
-            .AssertReturns("y", new { a = 1.0 });
+
 
     [Test]
     public void TwoFieldStructInitialization() =>
@@ -29,6 +24,32 @@ public class StructBodyTest {
             .AssertReturns(
                 "y",
                 new { a = 1.0, b = "vasa" });
+
+    [Test]
+    public void StructField_OfInt8_PreservesType() {
+        var rt = Funny.Hardcore.Build("v:int8=5\r p={x=v}\r out=p.x");
+        rt.Run();
+        Assert.AreEqual("Int8", rt["out"].Type.ToString());
+        Assert.AreEqual((sbyte)5, rt["out"].Value);
+    }
+
+    [Test]
+    public void StructField_OfByte_PreservesType() {
+        var rt = Funny.Hardcore.Build("v:byte=5\r p={x=v}\r out=p.x");
+        rt.Run();
+        Assert.AreEqual("UInt8", rt["out"].Type.ToString());
+        Assert.AreEqual((byte)5, rt["out"].Value);
+    }
+
+    [Test]
+    public void StructField_OfFloat32_PreservesType() {
+        var rt = Funny.Hardcore
+            .WithDialect(floatFamilySupport: FloatFamilySupport.Float32AndFloat64)
+            .Build("v:float32=1.5\r p={x=v}\r out=p.x");
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(1.5f, rt["out"].Value);
+    }
 
 
     [TestCase("y = {a = 1.0; b ='vasa'; c = 12*5.0}")]
@@ -184,7 +205,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccessNestedCreated() {
-        TraceLog.IsEnabled = true;
 
         ("first = {b = 24; c=25}; " +
          "second = {d = first; e = first.c; f = 3}; " +
@@ -194,7 +214,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccessNestedCreatedSimple() {
-        TraceLog.IsEnabled = true;
         ("first = {b = 24; c=25}; " +
          "second = {d = first; e = first.c}; " +
          "y = second.d.b + second.e").AssertResultHas("y", 49);
@@ -203,7 +222,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccessNestedCreatedSuperSimple() {
-        TraceLog.IsEnabled = true;
         ("first = {b = 24}; " +
          "second = {d = 1.0; e = first.b}; " +
          "y = second.e").AssertResultHas("y", 24);
@@ -211,7 +229,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccessManyNestedCreatedHellTest() {
-        TraceLog.IsEnabled = true;
         ("a1 = {af1_24 = 24; af2_1=1}; " +
          "b2 = {bf1 = a1; bf2_1 = a1.af2_1}; " +
          "c3 = {cf1_1 = b2.bf2_1; cf2_24 = a1.af1_24}; " +
@@ -221,7 +238,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccessManyNestedCreatedHellTest3() {
-        TraceLog.IsEnabled = true;
         ("a1 = {af1_24 = 24; af2_1=1}; " +
          "b2 = {bf1 = a1; bf2_1 = a1.af2_1}; " +
          "c3 = {cf1_1 = b2.bf2_1; cf2_24 = a1.af1_24}; " +
@@ -230,7 +246,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccess_twinComplex() {
-        TraceLog.IsEnabled = true;
         ("x1 = {aField = 24;}; " +
          "x2 = {cField = x1.aField}; " +
          "y = x1.aField  + x1.aField").AssertResultHas("y", 48);
@@ -238,7 +253,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccessManyNestedCreatedHellTest4() {
-        TraceLog.IsEnabled = true;
         ("a1 = {af1_24 = 24; af2_1=1}; " +
          "b2 = {bf1 = a1; bf2_1 = a1.af2_1}; " +
          "y = a1.af1_24 + b2.bf1.af2_1 + b2.bf2_1 + a1.af1_24").AssertResultHas("y", 50);
@@ -246,7 +260,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccessManyNestedCreatedHellTest5() {
-        TraceLog.IsEnabled = true;
         ("a1 = {af1_24 = 24; af2_1=1}; " +
          "b2 = {bf1 = a1; bf2_1 = a1.af2_1}; " +
          "y = a1.af1_24 + b2.bf1.af2_1 + b2.bf2_1 + a1.af1_24").AssertResultHas("y", 50);
@@ -254,7 +267,6 @@ public class StructBodyTest {
 
     [Test]
     public void Constant_TwinAccessToTwinNested() {
-        TraceLog.IsEnabled = true;
         ("a1 = {af1_24 = 24; af2_1=1}; " +
          "b2 = {bf1 = a1; bf2_1 = a1.af2_1}; " +
          "y = a1.af1_24 + b2.bf1.af2_1").AssertResultHas("y", 25);
@@ -262,7 +274,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccessManyNestedCreatedHellTest2() {
-        TraceLog.IsEnabled = true;
         ("a1 = {af1_24 = 24; af2_1=1}; " +
          "b2 = {bf2_1 = 1}; " +
          "c3 = {cf1_1 = b2.bf2_1; cf2_24 = 24}; " +
@@ -272,7 +283,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccess3EquationNested() {
-        TraceLog.IsEnabled = true;
         ("a1 = {af1_24 = 24; af2_1=1}; " +
          "b2 = {bf1 = a1; bf2_1 = a1.af2_1}; " +
          "y = a1.af1_24 + b2.bf1.af2_1 + b2.bf2_1 + a1.af1_24").AssertResultHas("y", 50);
@@ -280,7 +290,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccess3EquationNested3() {
-        TraceLog.IsEnabled = true;
         ("a1 = { af1_24 = 24; af2_1=1 }; " +
          "b2 = { bf1 = a1; bf2_1 = a1.af2_1 }; " +
          "y = a1.af1_24 + b2.bf1.af2_1 + a1.af1_24").AssertResultHas("y", 49);
@@ -291,7 +300,6 @@ public class StructBodyTest {
     [TestCase(3)]
     [TestCase(42)]
     public void ConstantNCountAccessConcrete(int n) {
-        TraceLog.IsEnabled = true;
         ("str = {field = 1.0}; " +
          $"y = {string.Join("+", Enumerable.Range(0, n).Select(_ => "str.field"))}")
             .AssertResultHas("y", (double)n);
@@ -302,7 +310,6 @@ public class StructBodyTest {
     [TestCase(3)]
     [TestCase(42)]
     public void ConstantNCountAccess(int n) {
-        TraceLog.IsEnabled = true;
         ("str = {field = 1}; " +
          $"y = {string.Join("+", Enumerable.Range(0, n).Select(_ => "str.field"))}")
             .AssertResultHas("y", n);
@@ -310,7 +317,6 @@ public class StructBodyTest {
 
     [Test]
     public void ConstantAccess3EquationNested2() {
-        TraceLog.IsEnabled = true;
         ("a1 = {af1_24 = 24; af2_1=1}; " +
          "b2 = {bf1 = a1; bf2_1 = a1.af2_1}; " +
          "y = a1.af1_24 + b2.bf1.af2_1 + b2.bf2_1")
@@ -338,6 +344,18 @@ public class StructBodyTest {
          "d = {e = 'lala'; f = a};" +
          "y = d.f.b[1]")
         .AssertResultHas("y", 2);
+    [Test]
+    public void ConstAccessDoubleNestedCreatedComposite2() =>
+        ("a = {b= [1]};" +
+         "d = {f = a};" +
+         "y = d.f.b[0]")
+            .AssertResultHas("y", 1);
+
+    [Test]
+    public void ConstAccessDoubleNestedCreatedComposite3() =>
+        ("d = {f = {b= [1]}};" +
+         "y = d.f.b[0]")
+            .AssertResultHas("y", 1);
 
     [Test]
     public void ConstAccessDoubleNestedCreated() => "d = {f = {b= 2.0}}; y = d.f.b".AssertResultHas("y", 2.0);
@@ -387,7 +405,6 @@ public class StructBodyTest {
 
 
     [Test]
-    [Ignore("Todo: Syntax collision with pipe forward")]
     public void GenericLambdaInStruct() =>
         "a = {dec = (rule it-1); inc = (rule it+1);}; y = a.inc(1) + a.inc(2) + a.dec(3)"
             .AssertResultHas("y", 7);
@@ -634,7 +651,6 @@ foo = [[[fooin]]]; bar = foo;".Build();
     public void ObviousFails(string expr) => expr.AssertObviousFailsOnParse();
 
 
-   // [Ignore("Bug #68")]
     [TestCase( @"
                 foo = {a = {id = 42}}
                 baz = foo.b.id
@@ -669,4 +685,163 @@ foo = [[[fooin]]]; bar = foo;".Build();
         FunnyAssert.ObviousFailsOnParse(() => {
             Funny.Hardcore.WithApriori<int>("foo").Build(expression);
         });
+
+    [Test]
+    public void MR5Bug3_ArrayOfAnonStructWithFnField_FU719() {
+        Assert.DoesNotThrow(() =>
+            Funny.Hardcore
+                .WithDialect(namedTypesSupport: NamedTypesSupport.Enabled)
+                .Build("type s = {f:rule(int)->int}\rarr:s[] = [{f=rule it*2}, {f=rule it*3}]"));
+    }
+
+    [Test]
+    public void MR5Bug3_ArrayOfAnonStructWithFnField_ThreeElements() {
+        Assert.DoesNotThrow(() =>
+            Funny.Hardcore
+                .WithDialect(namedTypesSupport: NamedTypesSupport.Enabled)
+                .Build("type s = {f:rule(int)->int}\rarr:s[] = [{f=rule it*2}, {f=rule it*3}, {f=rule it*4}]"));
+    }
+
+    [Test]
+    public void MR5Bug6_NarrowStructAnnotation_RejectsExtraFieldAccess() {
+        // Width subtyping (Specs/Types.md L90-91): `{x,y,z}` IS convertible to `{x,y}`.
+        // Assignment succeeds, but accessing a field outside the declared annotation
+        // must be rejected at compile time.
+        Assert.Throws<FunnyParseException>(() =>
+            "a = {x=1, y=2, z=3}\rb:{x:int, y:int} = a\rout = b.z".Calc());
+    }
+
+    [Test]
+    public void MR5Bug6_NarrowStructAnnotation_LegitNarrowingWorks() {
+        "a = {x=1, y=2, z=3}\rb:{x:int, y:int} = a\rout = b.x"
+            .Calc().AssertResultHas("out", 1);
+    }
+
+    [Test]
+    public void MR9Bug2_DuplicateFieldInStructLiteral_ClearError() {
+        var ex = Assert.Throws<FunnyParseException>(() => "y = {a=1, a=2}".Calc());
+        StringAssert.Contains("duplicate", ex.Message.ToLowerInvariant());
+        StringAssert.Contains("'a'", ex.Message);
+    }
+
+    [Test]
+    public void MR9Bug2_DuplicateFieldCaseInsensitive_ClearError() {
+        var ex = Assert.Throws<FunnyParseException>(() => "y = {a=1, A=2}".Calc());
+        StringAssert.Contains("duplicate", ex.Message.ToLowerInvariant());
+    }
+
+    [Test]
+    public void MR9Bug2_Control_DistinctFields_Work() {
+        "y = {a=1, b=2}".Calc();
+    }
+
+    #region FloatFamily dialect
+
+    [Test]
+    public void Float32_Struct_FieldConstruction_ExplicitAnnotation() {
+        var rt = "v:float32=1.5\r p={x=v}\r out=p.x".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(1.5f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Struct_TypedFunctionParam_AccessField() {
+        var rt = "f(p:{x:float32}):float32 = p.x\r v:float32=1.5\r out = f({x=v})".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(1.5f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Struct_NestedStruct_WithF32Field() {
+        var rt = "v:float32=1.5\r p={a={b=v}}\r out=p.a.b".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(1.5f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Struct_TwoF32Fields_Sum() {
+        var rt = "a:float32=1.5\r b:float32=2.5\r p={a=a,b=b}\r out=p.a+p.b".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(4.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Struct_IfElse_FieldLca_NarrowToF32() {
+        var rt = "c:bool; out:{a:float32} = if(c) {a=1.0} else {a=2.0}".BuildWithFloats();
+        rt["c"].Value = true;
+        rt.Run();
+        Assert.AreEqual(1.0f, ((System.Collections.Generic.IDictionary<string, object>)rt["out"].Value)["a"]);
+    }
+
+    [Test]
+    public void Float32_Struct_IfElse_MixedF32AndInt_TargetF32() {
+        var rt = "c:bool; x:float32=1.5; out:{a:float32} = if(c) {a=x} else {a=2}".BuildWithFloats();
+        rt["c"].Value = false;
+        rt.Run();
+        Assert.AreEqual(2.0f, ((System.Collections.Generic.IDictionary<string, object>)rt["out"].Value)["a"]);
+    }
+
+    [Test]
+    public void Float32_Struct_Equality_TwoF32Structs() {
+        var rt = "a:float32=1.5; b:float32=1.5; out = {x=a} == {x=b}".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(true, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Struct_Inequality_TwoDifferentF32Structs() {
+        var rt = "a:float32=1.5; b:float32=2.5; out = {x=a} == {x=b}".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(false, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_StructArray_MapAccessF32Field() {
+        var rt = "arr:{x:float32}[] = [{x=1.5},{x=2.5}]\r out = arr.map(rule it.x)".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(new[] { 1.5f, 2.5f }, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Struct_RealLiteral_TargetF32Field_Narrows() {
+        var rt = "out:{x:float32} = {x=1.5}".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual(1.5f, ((System.Collections.Generic.IDictionary<string, object>)rt["out"].Value)["x"]);
+    }
+
+    [Test]
+    public void Float32_Struct_MixedFieldTypes_PreserveEach() {
+        var rt = "v:float32=3.14\r p={pi=v, count=5, name='pi'}\r a=p.pi\r b=p.count\r c=p.name".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["a"].Type.ToString());
+        Assert.AreEqual(3.14f, rt["a"].Value);
+        Assert.AreEqual(5, rt["b"].Value);
+        Assert.AreEqual("pi", rt["c"].Value);
+    }
+
+    [Test]
+    public void Float32_Struct_ThreeLevelNesting_F32Access() {
+        var rt = "v:float32=42.0\r p={a={b={c=v}}}\r out=p.a.b.c".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(42.0f, rt["out"].Value);
+    }
+
+    [Test]
+    public void Float32_Struct_PassAndReturn_PreserveF32Field() {
+        var rt = "identity(s:{x:float32}):{x:float32} = s\r v:float32=1.5\r p={x=v}\r q=identity(p)\r out=q.x".BuildWithFloats();
+        rt.Run();
+        Assert.AreEqual("Float32", rt["out"].Type.ToString());
+        Assert.AreEqual(1.5f, rt["out"].Value);
+    }
+    #endregion
+
+    [Test]
+    public void StructArrayFieldArith_WidensToReal() =>
+        "data:{x:int,y:real}[]=[{x=1,y=2.5}]\rout = data[0].y + 1"
+            .Calc().AssertResultHas("out", 3.5);
 }

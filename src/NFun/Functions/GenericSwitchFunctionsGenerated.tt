@@ -7,13 +7,19 @@ namespace NFun.Functions {
 <#
     //------------------------------------------------------------------------------------------------------------------------------
     //Body
-    var integers = new[] {"UInt8" ,"UInt16","UInt32","UInt64","Int16" ,"Int32" ,"Int64" };
-    var numbers  = new[] {"UInt8" ,"UInt16","UInt32","UInt64","Int16" ,"Int32" ,"Int64","Real" };
-    var arithmetical  = new[] {"UInt8" ,"UInt16","UInt32","UInt64","Int16" ,"Int32" ,"Int64","Real" };
-    var signedNumber = new[] {"Int16","Int32","Int64","Real"};
+    var integers = new[] {"UInt8" ,"UInt16","UInt32","UInt64","Int8" ,"Int16" ,"Int32" ,"Int64" };
+    var numbers  = new[] {"UInt8" ,"UInt16","UInt32","UInt64","Int8" ,"Int16" ,"Int32" ,"Int64","Real" };
+    var arithmetical  = new[] {"UInt8" ,"UInt16","UInt32","UInt64","Int8" ,"Int16" ,"Int32" ,"Int64","Real" };
+    var signedNumber = new[] {"Int8" ,"Int16","Int32","Int64","Real"};
     
-    WriteTwoArgFunction("DivideInt",integers,"/");
-    WriteTwoArgFunction("Remainder",numbers,"%");
+    // DivideIntFunction and RemainderFunction are HAND-MAINTAINED in
+    // GenericSwitchFunctionsGenerated.cs and no longer generated: the MIN / -1 edge
+    // (signed checked/unchecked dispatch + divisor guard on the full-width arms where the
+    // CLR div/rem instruction traps) cannot be expressed by the generic writers below.
+    // NOTE the whole template is stale wrt the .cs anyway (Float32 arms, BitInverse moved
+    // to BitwiseFunctions.cs) — do not regenerate blindly.
+    //WriteTwoArgFunction("DivideInt",integers,"/");
+    //WriteTwoArgFunction("Remainder",numbers,"%");
     WriteTwoArgFunction("Add",arithmetical,"+",      name:null, overflowIntegers: true);
     WriteTwoArgFunction("Substract",arithmetical,"-",name:null, overflowIntegers: true);
     WriteTwoArgFunction("Multiply",arithmetical,"*", name:null, overflowIntegers: true);
@@ -21,7 +27,7 @@ namespace NFun.Functions {
     WriteTwoArgFunction("BitAnd",integers,"&");
     WriteTwoArgFunction("BitOr",integers,"|");
     WriteSingleArgFunction("BitInverse", "CoreFunNames.BitInverse", integers, "~");
-    WriteSingleArgFunction("Negate", "CoreFunNames.Negate", signedNumber, "-");
+    WriteSingleArgFunction("Negate", "CoreFunNames.Negate", signedNumber, "-", overflowIntegers: true);
     WriteSingleArgFunction("Abs", "\"abs\"", signedNumber, "Math.Abs");
 #>
 }
@@ -47,7 +53,7 @@ namespace NFun.Functions {
     }
 
     void WriteEndSelector() {
-#>        _                   => throw new ArgumentOutOfRangeException()
+#>        _                   => throw new NFun.Exceptions.NFunImpossibleException("Unsupported type for this function")
     };
 <#
     }
@@ -143,8 +149,22 @@ namespace NFun.Functions {
                 }
 <#}
 
-    
-    void WriteSingleArgFunction(string className, string name, string[] types, string op) {
+    void WriteSingleArgOverflowTypeSelector(string type) {
+#>                                           BaseFunnyType.<#= type #> =>context.AllowIntegerOverflow? <#= type #>Function.Instance: <#= type #>CheckedFunction.Instance,
+<#
+    }
+
+    void WriteSingleArgOverflowConcrete(string type, string op) {
+        var clrType = type == "UInt8" ? "byte" : type;
+        #>
+                private class <#= type #>CheckedFunction : FunctionWithSingleArg {
+                    public static <#=type#>CheckedFunction Instance = new <#=type#>CheckedFunction();
+                    public override object Calc(object a){ checked { return (<#= clrType #>)(<#= op #>((<#= clrType #>)a)); }}
+                }
+<#}
+
+
+    void WriteSingleArgFunction(string className, string name, string[] types, string op, bool overflowIntegers = false) {
 #>
 
 
@@ -155,14 +175,16 @@ public class <#= className #>Function : PureGenericFunctionBase {
 <#
         foreach (string type in types)
         {
-            if (type != "Real")
-                WriteSimpleTypeSelector(type);
-            else
+            if (type == "Real")
                 WriteRealTypeSelector("FunctionWithSingleArg");
+            else if (overflowIntegers)
+                WriteSingleArgOverflowTypeSelector(type);
+            else
+                WriteSimpleTypeSelector(type);
         }
         WriteEndSelector();
 #>
-        result.Name = CoreFunNames.Negate;
+        result.Name = <#= name #>;
         result.ArgTypes = concreteTypes;
         result.ReturnType = concreteTypes[0];
         return result;
@@ -170,14 +192,16 @@ public class <#= className #>Function : PureGenericFunctionBase {
 <#
         foreach (string type in types)
         {
-            if (type != "Real")
-            {
-                WriteSingleArgConcrete(type, op);
-            }
-            else
+            if (type == "Real")
             {
                 WriteSingleArgConcrete("Double",op);
                 WriteSingleArgConcrete("Decimal",op);
+            }
+            else
+            {
+                WriteSingleArgConcrete(type, op);
+                if(overflowIntegers)
+                    WriteSingleArgOverflowConcrete(type, op);
             }
         }
         #>

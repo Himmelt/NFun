@@ -29,7 +29,17 @@ internal static class CoreFunNames {
     public const string BitShiftRight = ">>";
     public const string Not = "!";
     public const string Negate = "-negate";
+    public const string NullCoalesce = "??";
+    public const string ForceUnwrap = "___forceUnwrap___";
+    public const string SafeGetElementName = "?[]";
     public const string ToText = "toText";
+    public const string ToNumText = "toNumText";
+    public const string ToHexText = "toHexText";
+    public const string ToBinText = "toBinText";
+    public const string ToSciText = "toSciText";
+    public const string PadLeftText = "padLeftText";
+    public const string PadRightText = "padRightText";
+    public const string PadCenterText = "padCenterText";
 
     // UsedInInterpolation:
 

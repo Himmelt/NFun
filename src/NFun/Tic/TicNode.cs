@@ -1,13 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Threading;
 using NFun.Exceptions;
 using NFun.Tic.SolvingStates;
 
-namespace NFun.Tic; 
+namespace NFun.Tic;
+
+using System.Text;
 
 public enum TicNodeType {
     /// <summary>
@@ -22,7 +22,7 @@ public enum TicNodeType {
     SyntaxNode = 4,
 
     /// <summary>
-    /// Generic type from function/constant signature or created in process of solving. 
+    /// Generic type from function/constant signature or created in process of solving.
     /// </summary>
     TypeVariable = 8
 }
@@ -52,8 +52,12 @@ public class TicNode {
     public static TicNode CreateTypeVariableNode(string name, ITicNodeState state, bool registered = false)
         => new(name, state, TicNodeType.TypeVariable) { Registered = registered };
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static TicNode CreateInvisibleNode(ITicNodeState state)
+        => new("invisible", state, TicNodeType.TypeVariable) { Registered = false };
+
     private TicNode(object name, ITicNodeState state, TicNodeType type) {
-        _uid = Interlocked.Increment(ref _interlockedId);
+        _uid = ++_interlockedId;
         Name = name;
         State = state;
         Type = type;
@@ -64,10 +68,23 @@ public class TicNode {
 
     #region Ancestors
 
+    /// <summary>
+    /// Deduplicate ancestor edges. With true graph cycles in named recursive types, the same
+    /// root node's field can receive O(N) duplicate AddAncestor calls from N literal-struct
+    /// call sites (all sharing the cycle root); without deduplication, _ancestors grows as
+    /// O(N), each Pull iterates all entries → O(N²) Pull cost on AccessChain(N).
+    /// PERF: ~8% on Simple|Build for non-recursive code — pays for safety on cyclic graphs.
+    /// Targeted dedup at specific call sites was attempted (commit history) but proved too
+    /// risky given the number of sites that can introduce duplicates during recursive
+    /// resolution (Pull/Push/SetCall/MergeRefs paths). Reverted to global dedup for
+    /// correctness; further perf wins should come from reducing M2-B unconditional overhead
+    /// (IsContractiveCycleHead allocations, FreezeFunctionSignatureStructs, etc.).
+    /// </summary>
     public void AddAncestor(TicNode node) {
         if(node == this)
             AssertChecks.Panic("Circular ancestor 0");
-
+        for (int i = 0; i < _ancestors.Count; i++)
+            if (_ancestors[i] == node) return;
         _ancestors.Add(node);
     }
 
@@ -76,8 +93,7 @@ public class TicNode {
         if(nodes.Any(n => n == this))
             AssertChecks.Panic("Circular ancestor 1");
 #endif
-
-        _ancestors.AddRange(nodes);
+        foreach (var n in nodes) AddAncestor(n);
     }
 
     public void RemoveAncestor(TicNode node) =>
@@ -89,13 +105,36 @@ public class TicNode {
         _ancestors[index] = node;
     }
 
-    private readonly List<TicNode> _ancestors = new();
-    public IReadOnlyList<TicNode> Ancestors => _ancestors;
+    private readonly SmallList<TicNode> _ancestors = new();
+    public SmallList<TicNode> Ancestors => _ancestors;
 
     #endregion
 
 
     public bool IsMemberOfAnything { get; set; }
+    /// <summary>
+    /// True if this node is the element of a StateOptional composite.
+    /// Used by PropagateOptionalUpward to avoid double-wrapping: if a node is already
+    /// the element of opt(T), wrapping it again would create opt(opt(T)).
+    /// </summary>
+    internal bool IsOptionalElement { get; set; }
+    /// <summary>
+    /// True if this node's composite shape comes from a function signature parameter.
+    /// Prevents Optional wrapping: Opt(T) ≤ T is invalid for signature-given types.
+    /// </summary>
+    internal bool IsSignatureParam { get; set; }
+
+    /// <summary>
+    /// Witness flag certifying that this node is the head of a contractive μ-cycle
+    /// (Cardelli–Mitchell '89 §3 contractivity: every back-edge crosses a type constructor).
+    /// Set by the SCC driver after a cyclic SCC has been verified contractive. Downstream cycle
+    /// checks (ThrowIfRecursiveTypeDefinition, runtime Fit, coinductive Equals) treat this node
+    /// as a contractive boundary — equivalent to <c>cs.StructBound != null</c> for
+    /// short-circuiting purposes. Per Pottier–Rémy '92, μ-types are properties of the constraint
+    /// graph, not first-class AST objects.
+    /// </summary>
+    public bool IsContractiveCycleHead { get; set; }
+
     public bool IsSolved => _state.IsSolved;
     public bool IsMutable => _state.IsMutable;
 
@@ -105,12 +144,68 @@ public class TicNode {
         set
         {
             Debug.Assert(value != null);
-            Debug.Assert(_state == null || IsMutable || value.Equals(_state), "Node is already solved");
-
+            // Allowed mutations of a "solved" state (IsMutable=false):
+            //  1. value.Equals(_state) — no-op idempotent.
+            //  2. StateRefTo — graph-level redirection (rewiring).
+            //  3. StateOptional over composite _state — implicit-lift wrap T ≤ opt(T)
+            //     (Universal algebraic postulate per TicTypeSystem §Optional). The wrap
+            //     creates innerNode holding _state by reference, so structural identity
+            //     (TypeName, IsOptionalSourced) survives — only an Optional layer is added.
+            //  4. _state is anonymous StateStruct — anonymous structs carry no nominal
+            //     identity to preserve, so row-poly merges, LiftMuTypes promotion to
+            //     CS{StructBound}, and field-by-field refinement may all replace it.
+            //     WORKAROUND: this 4th clause is wider than strictly necessary — it
+            //     accepts any `value` for an anonymous-struct _state rather than enumerating
+            //     the three legitimate transitions (struct→struct, struct→CS{StructBound},
+            //     struct→StateRefTo). Narrowing it would re-trigger the BugC_LcaOfRecursiveVarsInArray
+            //     assertion failure that surfaced when Phase 1 of #108 flipped anonymous-
+            //     solved structs to IsMutable=false. Tracked in TicTechnicalDebt.md.
+            Debug.Assert(_state == null || IsMutable || value.Equals(_state)
+                || value is StateRefTo
+                || (value is StateOptional && _state is ICompositeState)
+                || (_state is StateStruct ss && ss.TypeName == null),
+                "Node is already solved");
             if (value is StateArray array)
                 array.ElementNode.IsMemberOfAnything = true;
-            else
-                Debug.Assert(!(value is StateRefTo refTo && refTo.Node == this), "Self referencing node");
+            else if (value is StateOptional optional)
+            {
+                optional.ElementNode.IsMemberOfAnything = true;
+                optional.ElementNode.IsOptionalElement = true;
+                // Flatten nested optionals at assignment time: opt(opt(T)) → opt(T)
+                // NFun doesn't support nested optionals, so any nesting is a solver artifact
+                var innerNonRef = optional.ElementNode.GetNonReference();
+                if (innerNonRef.State is StateOptional innerOpt)
+                {
+                    value = innerOpt;
+                    innerOpt.ElementNode.IsMemberOfAnything = true;
+                    innerOpt.ElementNode.IsOptionalElement = true;
+                }
+            }
+            else if (value is StateRefTo refTo && refTo.Node == this)
+            {
+                TraceLog.WriteLine($"  Skip self-referencing node {Name}");
+                return; // Skip self-referencing (occurs with recursive struct types)
+            }
+            // If assigning an opt-sourced struct state would close a non-contractive cycle (one
+            // of the struct's fields reaches this very node via composite traversal without an
+            // Optional/Array break), restore the Optional break by wrapping the new state in
+            // StateOptional. Yields the principal iso-recursive type μX. opt(struct{…X…})
+            // instead of an invalid struct→struct loop. The IsOptionalSourced gate (set by
+            // SetSafeFieldAccess and preserved through merges) distinguishes inferred recursion
+            // through `?.` from a declared `type t = {self:t}` which must error.
+            // Gate order: StructSubgraphIsOptSourced short-circuits on `ns.IsOptionalSourced`
+            // (O(1)) and on a non-opt-sourced subgraph (single field walk, no recursion into
+            // unrelated nodes). StructHasFieldReaching walks the struct's reachable subgraph
+            // looking for `this` — the more expensive predicate, evaluated only when the
+            // cheaper one already classified the struct as opt-sourced.
+            if (value is StateStruct ns
+                && SolvingFunctions.StructSubgraphIsOptSourced(ns)
+                && SolvingFunctions.StructHasFieldReaching(ns, this))
+            {
+                var inner = CreateTypeVariableNode("e" + Name + "'", ns);
+                inner.IsOptionalElement = true;
+                value = new StateOptional(inner);
+            }
             _state = value;
         }
     }
@@ -127,10 +222,20 @@ public class TicNode {
             return;
 
 #if DEBUG
-        TraceLog.Write($"{Name}:", ConsoleColor.Green);
-        TraceLog.Write(State.Description);
-        if (Ancestors.Any())
-            TraceLog.Write("  <=" + string.Join(",", Ancestors.Select(a => a.Name)));
+        var sb = new StringBuilder($"{Name}");
+        var nameD = 3 - sb.Length;
+        if (nameD < 0) nameD = 0;
+        sb.Append(new string(' ', nameD));
+        sb.Append($"| {State.Description}");
+        if (Ancestors.Count > 0)
+            sb.Append(" --> " + string.Join(",", Ancestors.Select(a => a.Name)));
+        var delta = 30 - sb.Length;
+        if (delta < 0)
+            delta = 0;
+        sb.Append(new string(' ', delta));
+        sb.Append("| state: " + State.StateDescription);
+
+        TraceLog.Write(sb.ToString());
         TraceLog.WriteLine();
 #endif
     }
@@ -138,20 +243,22 @@ public class TicNode {
     public bool TryBecomeConcrete(StatePrimitive primitiveState) {
         if (_state is StatePrimitive oldConcrete)
             return oldConcrete.Equals(primitiveState);
-        if (_state is ConstrainsState constrains)
+        if (_state is ConstraintsState constrains)
         {
-            if (constrains.Fits(primitiveState))
+            if (constrains.CanBeConvertedTo(primitiveState))
             {
                 _state = primitiveState;
                 return true;
             }
         }
+        if (_state is StateRefTo refTo)
+            return refTo.Node.TryBecomeConcrete(primitiveState);
 
         return false;
     }
 
     public bool TrySetAncestor(StatePrimitive anc) {
-        if (anc.Equals(StatePrimitive.Any))
+        if (anc== StatePrimitive.Any)
             return true;
         var node = this;
         if (node.State is StateRefTo)
@@ -159,14 +266,14 @@ public class TicNode {
 
         if (node.State is StatePrimitive oldConcrete)
         {
-            return oldConcrete.CanBeImplicitlyConvertedTo(anc);
+            return oldConcrete.CanBePessimisticConvertedTo(anc);
         }
-        else if (node.State is ConstrainsState constrains)
+        else if (node.State is ConstraintsState constrains)
         {
             if (!constrains.TryAddAncestor(anc))
                 return false;
             constrains.Preferred = anc;
-            var optimized = constrains.GetOptimizedOrNull();
+            var optimized = constrains.SimplifyOrNull();
             if (optimized == null)
                 return false;
             State = optimized;
@@ -175,20 +282,40 @@ public class TicNode {
 
         return false;
     }
-    
-    public TicNode GetNonReference() {
-        var result = this;
-        if (result.State is StateRefTo referenceA)
-        {
-            result = referenceA.Node;
-            if (result.State is StateRefTo)
-                return result.GetNonReference();
-        }
 
-        return result;
+    public TicNode GetNonReference() {
+        if (State is not StateRefTo refTo)
+            return this;
+        // Path compression: find root, then flatten chain
+        var root = refTo.Node;
+        while (root.State is StateRefTo nextRef)
+            root = nextRef.Node;
+        // Compress: point directly to root (skip intermediate nodes)
+        if (refTo.Node != root)
+            State = new StateRefTo(root);
+        return root;
     }
 
     public override int GetHashCode() => _uid;
 
     public void ClearAncestors() => _ancestors.Clear();
+
+    /// <summary>
+    /// If this node has nested optional state opt(opt(T)), flatten to opt(T).
+    /// Bypasses the normal state setter assertion since the node may already be solved.
+    /// NFun doesn't support nested optionals — any nesting is a solver artifact.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void FlattenNestedOptional() {
+        if (_state is StateOptional outerOpt)
+        {
+            var innerNonRef = outerOpt.ElementNode.GetNonReference();
+            if (innerNonRef.State is StateOptional innerOpt)
+            {
+                _state = innerOpt;
+                innerOpt.ElementNode.IsMemberOfAnything = true;
+                innerOpt.ElementNode.IsOptionalElement = true;
+            }
+        }
+    }
 }

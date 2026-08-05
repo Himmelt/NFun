@@ -108,6 +108,7 @@ NFun 可以执行简单的求值
 - 语法和语义定制
 - 内置函数
 - 注释
+- 可选类型、类型收窄、命名类型等
 
 ## 如何使用
 
@@ -133,3 +134,9 @@ NFun 可以执行简单的求值
 [详细规范: 规则(匿名函数)](https://github.com/tmteam/NFun/blob/master/Specs/Rules.md)
 
 [详细规范: 类型](https://github.com/tmteam/NFun/blob/master/Specs/Types.md)
+
+[详细规范: Optional 类型](https://github.com/tmteam/NFun/blob/master/Specs/Optionals.md)
+
+[详细规范: 命名类型](https://github.com/tmteam/NFun/blob/master/Specs/NamedTypes.md)
+
+[详细规范: 数学语法糖](https://github.com/tmteam/NFun/blob/master/Specs/Math-Sugar.md)

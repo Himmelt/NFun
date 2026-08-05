@@ -27,7 +27,7 @@ public interface IStateFunction {
 
     bool Apply(
         StatePrimitive ancestor,
-        ConstrainsState descendant,
+        ConstraintsState descendant,
         TicNode ancestorNode,
         TicNode descendantNode);
 
@@ -38,19 +38,19 @@ public interface IStateFunction {
         TicNode descendantNode);
 
     bool Apply(
-        ConstrainsState ancestor,
+        ConstraintsState ancestor,
         StatePrimitive descendant,
         TicNode ancestorNode,
         TicNode descendantNode);
 
     bool Apply(
-        ConstrainsState ancestor,
-        ConstrainsState descendant,
+        ConstraintsState ancestor,
+        ConstraintsState descendant,
         TicNode ancestorNode,
         TicNode descendantNode);
 
     bool Apply(
-        ConstrainsState ancestor,
+        ConstraintsState ancestor,
         ICompositeState descendant,
         TicNode ancestorNode,
         TicNode descendantNode);
@@ -63,7 +63,7 @@ public interface IStateFunction {
 
     bool Apply(
         ICompositeState ancestor,
-        ConstrainsState descendant,
+        ConstraintsState descendant,
         TicNode ancestorNode,
         TicNode descendantNode);
 
@@ -82,6 +82,12 @@ public interface IStateFunction {
     bool Apply(
         StateStruct ancestor,
         StateStruct descendant,
+        TicNode ancestorNode,
+        TicNode descendantNode);
+
+    bool Apply(
+        StateOptional ancestor,
+        StateOptional descendant,
         TicNode ancestorNode,
         TicNode descendantNode);
 }

@@ -4,6 +4,8 @@ using NUnit.Framework;
 
 namespace NFun.UnitTests;
 
+using static SolvingStates;
+
 public class TicStatesTest {
     [TestCase(PrimitiveTypeName.I16, PrimitiveTypeName.Real)]
     [TestCase(null, PrimitiveTypeName.Real)]
@@ -12,8 +14,8 @@ public class TicStatesTest {
     public void ConstrainsTestsAreEqual(PrimitiveTypeName? desc, PrimitiveTypeName? anc) {
         var descState = desc == null ? null : new StatePrimitive(desc.Value);
         var ancState = anc == null ? null : new StatePrimitive(anc.Value);
-        var state1 = new ConstrainsState(descState, ancState, false);
-        var state2 = new ConstrainsState(descState, ancState, false);
+        var state1 = Constrains(descState, ancState);
+        var state2 = Constrains(descState, ancState);
         Assert.IsTrue(state1.Equals(state2));
         Assert.AreEqual(state1, state2);
     }
@@ -25,25 +27,25 @@ public class TicStatesTest {
     public void ConstrainsTestsAreNotEqual(PrimitiveTypeName? desc, PrimitiveTypeName? anc) {
         var descState = desc == null ? null : new StatePrimitive(desc.Value);
         var ancState = anc == null ? null : new StatePrimitive(anc.Value);
-        var state1 = new ConstrainsState(descState, ancState);
-        var state2 = new ConstrainsState(null, StatePrimitive.Any);
+        var state1 = Constrains(descState, ancState);
+        var state2 = Constrains(null, StatePrimitive.Any);
         Assert.IsFalse(state1.Equals(state2));
         Assert.AreNotEqual(state1, state2);
     }
 
     [Test]
     public void RefState_RefToSameNode_EqualReturnsTrue() {
-        var node = TicNode.CreateNamedNode("a", new ConstrainsState());
-        var state1 = new StateRefTo(node);
-        var state2 = new StateRefTo(node);
+        var node = TicNode.CreateNamedNode("a", EmptyConstraints);
+        var state1 = Ref(node);
+        var state2 = Ref(node);
         Assert.IsTrue(state1.Equals(state2));
         Assert.AreEqual(state1, state2);
     }
 
     [Test]
     public void RefState_RefToDifferentNodes_EqualReturnsFalse() {
-        var state1 = new StateRefTo(TicNode.CreateNamedNode("a", new ConstrainsState()));
-        var state2 = new StateRefTo(TicNode.CreateNamedNode("b", new ConstrainsState()));
+        var state1 = Ref(TicNode.CreateNamedNode("a", EmptyConstraints));
+        var state2 = Ref(TicNode.CreateNamedNode("b", EmptyConstraints));
         Assert.IsFalse(state1.Equals(state2));
         Assert.AreNotEqual(state1, state2);
     }

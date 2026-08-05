@@ -8,6 +8,8 @@ public enum BaseFunnyType {
     UInt16 = 4,
     UInt32 = 5,
     UInt64 = 6,
+    Int8 = 21,
+    Float32 = 22,
     Int16 = 7,
     Int32 = 8,
     Int64 = 9,
@@ -17,5 +19,9 @@ public enum BaseFunnyType {
     Fun = 13,
     Generic = 14,
     Any = 15,
-    Struct = 16
+    Struct = 16,
+    Optional = 17,
+    None = 18,
+    Custom = 19,
+    NamedStruct = 20
 }

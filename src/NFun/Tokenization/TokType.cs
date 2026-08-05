@@ -118,6 +118,12 @@ public enum TokType {
     TextOpenInterpolation,
     TextMidInterpolation,
     TextCloseInterpolation,
+    /// <summary>Format specifier after ':' in interpolation: '{x:0.00}'</summary>
+    FormatSpec,
+    /// <summary>Alignment direction in interpolation: > (right), &lt; (left), ^ (center)</summary>
+    AlignLeft,
+    AlignRight,
+    AlignCenter,
     /// <summary>
     /// 192.168.0.1
     /// </summary>
@@ -137,11 +143,8 @@ public enum TokType {
     /// '..'
     /// </summary>
     TwoDots,
-    /// <summary>
-    /// step
-    /// </summary>
-    Step,
     TextType,
+    Int8Type,
     Int16Type,
     Int32Type,
     Int64Type,
@@ -150,6 +153,8 @@ public enum TokType {
     UInt32Type,
     UInt64Type,
     RealType,
+    Float32Type,
+    Float64Type,
     BoolType,
     CharType,
     AnythingType,
@@ -166,5 +171,53 @@ public enum TokType {
     /// </summary>
     Default,
     Reserved,
+    /// <summary>
+    /// /'x'
+    /// </summary>
+    CharLiteral,
+    /// <summary>
+    /// none literal
+    /// </summary>
+    None,
+    /// <summary>
+    /// '?'
+    /// </summary>
+    Question,
+    /// <summary>
+    /// ??
+    /// </summary>
+    NullCoalesce,
+    /// <summary>
+    /// ?.
+    /// </summary>
+    SafeAccess,
+    /// <summary>
+    /// ! (postfix)
+    /// </summary>
+    ForceUnwrap,
+    /// <summary>
+    /// -> (return type arrow)
+    /// </summary>
+    Arrow,
+    /// <summary>
+    /// Superscript digit ²³⁴⁵⁶⁷⁸⁹ (postfix power)
+    /// </summary>
+    Superscript,
+    /// <summary>
+    /// ... (spread/params)
+    /// </summary>
+    Spread,
+    /// <summary>
+    /// 'type' keyword for named type definitions
+    /// </summary>
+    TypeKeyword,
+    /// <summary>
+    /// 'try' keyword for error handling
+    /// </summary>
+    Try,
+    /// <summary>
+    /// 'catch' keyword for error handling
+    /// </summary>
+    Catch,
 
 }

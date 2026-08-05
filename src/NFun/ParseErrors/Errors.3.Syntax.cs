@@ -128,6 +128,36 @@ internal static partial class Errors {
     internal static FunnyParseException UnexpectedSpaceBeforeArrayTypeBrackets(FunnyType elementType, Interval interval) => new(
         412, $"there should be no space before the square brackets when defining the array type. Example: 'a:{elementType}[]'", interval);
 
+    internal static FunnyParseException UnexpectedSpaceBeforeArrayTypeBrackets(object elementType, Interval interval) => new(
+        412, $"there should be no space before the square brackets when defining the array type. Example: 'a:{elementType}[]'", interval);
+
+    internal static FunnyParseException StructTypeFieldNameExpected(Tok token) => new(
+        414, $"Field name expected in struct type, but was {ToText(token)}", token.Interval);
+
+    internal static FunnyParseException StructTypeColonExpected(Tok fieldName, Tok token) => new(
+        415, $"':' expected after field name '{fieldName.Value}' in struct type", token.Interval);
+
+    internal static FunnyParseException StructTypeSeparatorExpected(Tok token) => new(
+        416, $"',' or ';' expected between struct type fields, but was {ToText(token)}", token.Interval);
+
+    internal static FunnyParseException PositionalArgAfterNamed(string functionName, Interval interval) => new(
+        420, $"Positional argument cannot appear after named arguments in call to '{functionName}'", interval);
+
+    internal static FunnyParseException RequiredArgAfterDefault(FunCallSyntaxNode fun, ISyntaxNode arg) => new(
+        422, $"Required parameter cannot appear after parameters with default values in function '{fun.Id}'", arg.Interval);
+
+    internal static FunnyParseException MultipleParams(FunCallSyntaxNode fun) => new(
+        424, $"Function '{fun.Id}' cannot have more than one params (...) parameter", fun.Interval);
+
+    internal static FunnyParseException ParamsNotLast(FunCallSyntaxNode fun, TypedVarDefSyntaxNode param) => new(
+        426, $"Params parameter '...{param.Id}' must be the last parameter in function '{fun.Id}'", param.Interval);
+
+    internal static FunnyParseException KeywordOnlyWithoutDefault(FunCallSyntaxNode fun, string argName, Interval interval) => new(
+        428, $"Keyword-only parameter '{argName}' in function '{fun.Id}' must have a default value", interval);
+
+    internal static FunnyParseException DuplicateKeywordOnlyArg(FunCallSyntaxNode fun, string argName, Interval interval) => new(
+        430, $"Duplicate parameter '{argName}' in function '{fun.Id}'", interval);
+
     #endregion
 
 
@@ -212,6 +242,9 @@ internal static partial class Errors {
     internal static FunnyParseException StructFieldDelimiterIsMissed(Interval interval) => new(
         501, "There is no separator between the fields of structures. Use ',' or new line to separate fields", interval);
 
+    internal static FunnyParseException StructLiteralDuplicateField(string fieldName, Interval interval) => new(
+        502, $"Duplicate field '{fieldName}' in struct literal", interval);
+
     internal static FunnyParseException StructFieldIdIsMissed(Tok tok) => new(
         504, $"`{ToText(tok)}` found instead of the structure field name", tok.Interval);
 
@@ -223,6 +256,54 @@ internal static partial class Errors {
 
     internal static FunnyParseException StructIsUndone(int position) => new(
         510, "Struct definition is undone. Closing bracket '}' is missed", Interval.Position(position));
+
+    internal static FunnyParseException TypeNameExpected(Tok tok) => new(
+        511, $"Type name expected, but '{ToText(tok)}' was found", tok.Interval);
+
+    internal static FunnyParseException TypeDefTokenIsMissed(string typeName, Tok tok) => new(
+        512, $"'=' expected after 'type {typeName}', but '{ToText(tok)}' was found", tok.Interval);
+
+    internal static FunnyParseException TypeBodyExpected(string typeName, Tok tok) => new(
+        513, $"'{{' expected after 'type {typeName} =', but '{ToText(tok)}' was found", tok.Interval);
+
+    internal static FunnyParseException TypeFieldMustHaveTypeOrDefault(Tok fieldId) => new(
+        514, $"Type field '{fieldId.Value}' must have a type annotation or a default value", fieldId.Interval);
+
+    internal static FunnyParseException NamedTypeNotDefined(string typeName, Interval interval) => new(
+        515, $"Named type '{typeName}' is not defined", interval);
+
+    internal static FunnyParseException NamedTypeMissingRequiredField(string typeName, string fieldName, Interval interval) => new(
+        516, $"Required field '{fieldName}' is missing in constructor of type '{typeName}'", interval);
+
+    internal static FunnyParseException NamedTypeUnknownField(string typeName, string fieldName, Interval interval) => new(
+        517, $"Unknown field '{fieldName}' in constructor of type '{typeName}'", interval);
+
+    internal static FunnyParseException NamedTypeAlreadyDefined(string typeName, Interval interval) => new(
+        518, $"Type '{typeName}' is already defined", interval);
+
+    internal static FunnyParseException NamedTypeDuplicateField(string typeName, string fieldName, Interval interval) => new(
+        519, $"Duplicate field '{fieldName}' in type '{typeName}'", interval);
+
+    internal static FunnyParseException NamedTypeDefaultCannotReferenceVariable(string typeName, string fieldName, string varName, Interval interval) => new(
+        520, $"Default value for field '{fieldName}' in type '{typeName}' cannot reference variable '{varName}'. Defaults must be constant expressions.", interval);
+
+    internal static FunnyParseException NamedTypeDefaultCannotCallFunction(string typeName, string fieldName, Interval interval) => new(
+        521, $"Default value for field '{fieldName}' in type '{typeName}' cannot call functions. Defaults must be constant expressions.", interval);
+
+    internal static FunnyParseException NamedTypeDefaultMustBeConstant(string typeName, string fieldName, Interval interval) => new(
+        522, $"Default value for field '{fieldName}' in type '{typeName}' must be a constant expression.", interval);
+
+    internal static FunnyParseException NamedTypesNotSupported(Interval interval) => new(
+        523, "Named types are an experimental feature. Enable with NamedTypesSupport.Enabled", interval);
+
+    internal static FunnyParseException NamedTypeRecursiveCycle(string typeName) => new(
+        524, $"Type '{typeName}' has a non-optional recursive cycle. Use optional (T?) fields to break recursion", Interval.Empty);
+
+    internal static FunnyParseException NamedTypeRecursiveDefault(string typeName, Interval interval) => new(
+        526, $"Type '{typeName}' has a recursive default value (constructor references its own type). Use 'none' for recursive defaults", interval);
+
+    internal static FunnyParseException CircularTypeAlias(string[] chain) => new(
+        525, $"Circular type alias: {string.Join(" -> ", chain)}. Non-struct type aliases cannot form cycles", Interval.Empty);
 
 
     #endregion
@@ -264,6 +345,19 @@ internal static partial class Errors {
 
     internal static FunnyParseException FunctionOrStructMemberNameIsMissedAfterDot(Tok token) => new(
         558, $"Function name or field name expected after '.'{Nl} Example: [1,2].myFunction(){Nl} Example: user.name", token.Interval);
+
+    internal static FunnyParseException UnexpectedTokenAfterQuestion(Tok question, Tok next) => new(
+        559, $"'[' expected after '?' for safe array access{Nl} Example: arr?[0]", question.Start, next.Finish);
+
+    internal static FunnyParseException SafeArrayAccessNotSupported(Tok question) => new(
+        560, $"Safe array access '?[' is not yet supported", question.Interval);
+
+    internal static FunnyParseException ImplicitMultiplicationBeforeFunctionCall(
+        ISyntaxNode leftNode, FunCallSyntaxNode funCall) => new(
+        562,
+        $"Implicit multiplication before function call is not supported: `{leftNode.ToShortText()}{funCall.Id}(...)`"
+        + $"{Nl}Write `{leftNode.ToShortText()} * {funCall.Id}(...)` instead",
+        leftNode.Interval.Start, funCall.Interval.Finish);
 
     internal static FunnyParseException FunctionCallObrMissed(int funStart, string name, int position, ISyntaxNode pipedVal) {
         if (pipedVal == null)
@@ -310,6 +404,10 @@ internal static partial class Errors {
 
     internal static FunnyParseException RightBinaryArgumentIsMissing(ISyntaxNode leftNode, Tok @operator) => new(
         609, $"`{leftNode.ToShortText()} {ToText(@operator)} ???` - Right expression is missed{Nl} Example: {leftNode.ToShortText()} {ToText(@operator)} e", leftNode.Interval.Start, @operator.Finish);
+
+    internal static FunnyParseException SafeArrayAccessOpenBracketMissed(ISyntaxNode leftNode, Tok question) => new(
+        612, $"`{leftNode.ToShortText()} ? ???` - Trailing `?`: expected `[index]` for safe array access, `.field` for safe field access, or `?` for null-coalesce{Nl} Example: {leftNode.ToShortText()}?[0]",
+        leftNode.Interval.Start, question.Finish);
 
     #endregion
 

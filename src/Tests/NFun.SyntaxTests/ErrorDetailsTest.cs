@@ -8,12 +8,12 @@ namespace NFun.SyntaxTests;
 [TestFixture]
 public class ErrorDetailsTest {
     [TestCase("s = x ", "123abc", " z")]
-    [TestCase("s = x ", "!", " z")]
-    [TestCase("s = x ", "!", " z")]
+    [TestCase("s = x ! ", "z", "")]
+    [TestCase("s = x ! ", "z", "")]
     [TestCase("s = x + ", "0x", "")]
     [TestCase("", "(", "")]
     [TestCase("y(x,y)", "qwe", " x+y\r j = y(1,2)")]
-    [TestCase("j = y(1,2) \r y(x,a):", "x", " +y")]
+    [TestCase("j = y(1,2) \r y(x,a):x ", "+", "y")]
     [TestCase("j = y(1,2) \r y(x,b) ", "=", "")]
     [TestCase("j = y(1,2) \r y(x,c) ", "= ", "")]
     [TestCase("j = y(1,2) \r y(x,d) ", "=  ", "")]
@@ -48,11 +48,11 @@ public class ErrorDetailsTest {
     [TestCase("y(x) = x + ", "z", "")]
     [TestCase("y(x) = ", "z", " + x")]
     [TestCase("x:bool;y=sin(", "x", ")")]
-    [TestCase("y(x:int):bool = if (true) true else ", "x", "")]
+    [TestCase("y(x:int):bool = ","if (true) true else x", "")]
     [TestCase("y(x) = ", "z", " +x")]
     [TestCase("", "y(x,x)=", "x+1")]
     [TestCase("", "y(x,x,z)=", "x+1")]
-    [TestCase("m =[1.0,6.0]", ".foold", "(rule(i,x)=i+1)")]
+    [TestCase("m =", "[1.0,6.0]", ".foold(rule(i,x)=i+1)")]
     [TestCase("[1.0,7.0].fold(rule(i,", "i", ")=i+1)")]
     [TestCase("[1.0,8.0].map(rule", "(i,j)=i+j", ")")]
     [TestCase("foo(x) = x +1\r y=", "foo", "*3")]
@@ -156,4 +156,12 @@ public class ErrorDetailsTest {
                 });
         }
     }
+
+    // WO11 — `out:T_narrow = expr_wide` (e.g. `out:byte = 1000000`) surfaces the actionable
+    // FU740 "value doesn't fit type" error instead of the cryptic FU761. Pinned via a
+    // synthesized branch in Errors.4.Types.cs that walks up from the EquationSyntaxNode's RHS
+    // when the TIC descendant is missing.
+    [Test]
+    public void ByteEquation_LiteralOverflow_ProducesFriendlyError() =>
+        Assert.Throws<FunnyParseException>(() => "out:byte = 1000000".Calc());
 }

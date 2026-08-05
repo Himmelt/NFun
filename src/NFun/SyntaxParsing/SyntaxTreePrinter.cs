@@ -53,7 +53,7 @@ class SyntaxNodePrinterVisitor : ISyntaxNodeVisitor<string> {
 
     public string Visit(SyntaxTree node) => "syntax-tree";
 
-    public string Visit(TypedVarDefSyntaxNode node) => $"typed-var-def '{node.Id}:{node.FunnyType}'";
+    public string Visit(TypedVarDefSyntaxNode node) => $"typed-var-def '{node.Id}:{node.TypeSyntax}'";
 
     public string Visit(UserFunctionDefinitionSyntaxNode node) => $"fun '{node.Id}'";
 
@@ -70,4 +70,9 @@ class SyntaxNodePrinterVisitor : ISyntaxNodeVisitor<string> {
     public string Visit(StructInitSyntaxNode node) => "struct";
 
     public string Visit(DefaultValueSyntaxNode node) => "default";
+    public string Visit(BinOperatorSyntaxNode node) => $"binop '{node.Id}'";
+    public string Visit(UnaryOperatorSyntaxNode node) => $"unop '{node.Id}'";
+    public string Visit(TypeDeclarationSyntaxNode node) => $"type-decl '{node.TypeName}'";
+    public string Visit(NamedTypeConstructorSyntaxNode node) => $"type-ctor '{node.TypeName}'";
+    public string Visit(TryCatchSyntaxNode node) => "try-catch";
 }

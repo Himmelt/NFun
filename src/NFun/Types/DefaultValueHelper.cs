@@ -9,11 +9,17 @@ namespace NFun.Types;
 
 internal  static class DefaultValueHelper {
     static readonly Dictionary<BaseFunnyType, object> PrimitiveTypeMap = new() {
-        { BaseFunnyType.Any,    new object() },
+        // `any` is semantically equivalent to `any?` in NFun — any-typed slots can
+        // hold none. `default(any)` returns FunnyNone.Instance, matching the rule
+        // for Optional types. Previously: `new object()`, exposing a raw CLR
+        // System.Object instance through the API. (MR9Bug1.)
+        { BaseFunnyType.Any,    FunnyNone.Instance },
         { BaseFunnyType.Bool,   default(bool) },
         { BaseFunnyType.Char,   default(char) },
         { BaseFunnyType.Ip,     new IPAddress(new byte[]{0,0,0,0}) },
         { BaseFunnyType.Real,   default(double) },
+        { BaseFunnyType.Float32, default(float) },
+        { BaseFunnyType.Int8,   default(sbyte) },
         { BaseFunnyType.Int16,  default(Int16) },
         { BaseFunnyType.Int32,  default(Int32) },
         { BaseFunnyType.Int64,  default(Int64) },
@@ -24,6 +30,8 @@ internal  static class DefaultValueHelper {
     };
 
     public static object GetDefaultFunnyValue(this FunnyType type) {
+        if (type.BaseType == BaseFunnyType.Custom)
+            return type.CustomTypeDefinition.DefaultValue;
         if (type.IsPrimitive)
             return PrimitiveTypeMap[type.BaseType];
         
@@ -46,6 +54,9 @@ internal  static class DefaultValueHelper {
 
         if (type.BaseType == BaseFunnyType.Fun)
             return new DefaultHiOrderFunction(type.FunTypeSpecification.Output, type.FunTypeSpecification.Output);
+
+        if (type.BaseType == BaseFunnyType.Optional)
+            return FunnyNone.Instance;
 
         throw new NotSupportedException($"Type {type} has no default value");
     }

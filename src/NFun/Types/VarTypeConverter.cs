@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using NFun.Interpretation.Functions;
 using NFun.Interpretation.Nodes;
 using NFun.ParseErrors;
+using NFun.Runtime;
 using NFun.Runtime.Arrays;
 using NFun.Tokenization;
 
@@ -10,7 +11,8 @@ namespace NFun.Types;
 
 public static class VarTypeConverter {
     private static readonly bool[,] PrimitiveConvertMap;
-    private const int PrimitiveTypeCount = 16;
+    // 22 to accommodate Int8 (= 21); existing primitives still indexed by their original values.
+    private const int PrimitiveTypeCount = 23;
     static VarTypeConverter() {
         PrimitiveConvertMap = new bool [PrimitiveTypeCount, PrimitiveTypeCount];
         //every type can be converted to itself
@@ -44,25 +46,24 @@ public static class VarTypeConverter {
 
         PrimitiveConvertMap[(int)BaseFunnyType.Int32, (int)BaseFunnyType.Int64] = true;
 
-        /*
-         * Empty = 0,
-    Char =  1,
-    Bool  = 2,
-    UInt8 = 3,
-    UInt16 = 4,
-    UInt32 = 5,
-    UInt64 = 6,
-    Int16  =7,
-    Int32 = 8,
-    Int64 = 9,
-    Real = 10,
-    Ip = 11,
-    ArrayOf = 12,
-    Fun = 13,
-    Generic = 14,
-    Any  = 15,
-         * 
-         */
+        // Int8 lives outside the UInt8..Int64 contiguous range (= 21). Wire its
+        // signed-widening paths explicitly. No unsigned-target paths — negatives
+        // can't be represented; no narrowing — anything→Int8 is rejected.
+        PrimitiveConvertMap[(int)BaseFunnyType.Int8, (int)BaseFunnyType.Int16] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.Int8, (int)BaseFunnyType.Int32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.Int8, (int)BaseFunnyType.Int64] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.Int8, (int)BaseFunnyType.Real]  = true;
+
+        // integer → Float32 → Real widening chain.
+        PrimitiveConvertMap[(int)BaseFunnyType.UInt8,  (int)BaseFunnyType.Float32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.UInt16, (int)BaseFunnyType.Float32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.UInt32, (int)BaseFunnyType.Float32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.UInt64, (int)BaseFunnyType.Float32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.Int8,   (int)BaseFunnyType.Float32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.Int16,  (int)BaseFunnyType.Float32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.Int32,  (int)BaseFunnyType.Float32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.Int64,  (int)BaseFunnyType.Float32] = true;
+        PrimitiveConvertMap[(int)BaseFunnyType.Float32, (int)BaseFunnyType.Real]   = true;
     }
 
     private static readonly Func<object, object> ToText = o => new TextFunnyArray(o?.ToString() ?? "");
@@ -70,17 +71,86 @@ public static class VarTypeConverter {
     
     public static Func<object, object> GetConverterOrNull(TypeBehaviour typeBehaviour, FunnyType @from, FunnyType to) {
         //todo coverage
+        if (from.Equals(to))
+            return NoConvertion;
         if (to.IsText)
             return ToText;
         if (to.BaseType == BaseFunnyType.Any)
             return NoConvertion;
+        // Any → T: recursive type cycle placeholder — runtime value has the actual type
+        if (from.BaseType == BaseFunnyType.Any)
+            return NoConvertion;
+
+        // Custom → same Custom: identity
+        if (from.BaseType == BaseFunnyType.Custom && to.BaseType == BaseFunnyType.Custom
+            && Equals(from.CustomTypeDefinition, to.CustomTypeDefinition))
+            return NoConvertion;
+
+        // NamedStruct ↔ Struct: named type boundary in recursive types.
+        // Runtime values are FunnyStruct regardless of named vs anonymous typing.
+        if (to.BaseType == BaseFunnyType.NamedStruct && from.BaseType == BaseFunnyType.Struct)
+            return NoConvertion;
+        if (from.BaseType == BaseFunnyType.NamedStruct && to.BaseType == BaseFunnyType.Struct)
+            return NoConvertion;
+        if (from.BaseType == BaseFunnyType.NamedStruct && to.BaseType == BaseFunnyType.NamedStruct)
+            return NoConvertion;
+
+        // None → Optional(T): FunnyNone stays FunnyNone
+        if (from.BaseType == BaseFunnyType.None && to.BaseType == BaseFunnyType.Optional)
+            return NoConvertion;
+
+        // T → Optional(T): implicit wrapping (boxed value is already valid)
+        // At runtime, value might be FunnyNone (from coalesce chains); pass it through.
+        if (to.BaseType == BaseFunnyType.Optional && from.BaseType != BaseFunnyType.Optional)
+        {
+            var inner = GetConverterOrNull(typeBehaviour, from, to.OptionalTypeSpecification.ElementType);
+            if (inner == null || inner == NoConvertion) return NoConvertion;
+            return o => o is FunnyNone ? o : inner(o);
+        }
+
+        // Optional(NamedStruct) → Struct: runtime values are FunnyStruct either way,
+        // NoConvertion is safe because FunnyNone passes through unchanged.
+        if (from.BaseType == BaseFunnyType.Optional
+            && from.OptionalTypeSpecification.ElementType.BaseType == BaseFunnyType.NamedStruct
+            && to.BaseType == BaseFunnyType.Struct)
+            return o => o is FunnyNone ? o : o;
+        if (from.BaseType == BaseFunnyType.Optional
+            && from.OptionalTypeSpecification.ElementType.BaseType == BaseFunnyType.Struct
+            && to.BaseType == BaseFunnyType.NamedStruct)
+            return o => o is FunnyNone ? o : o;
+
         if (from.BaseType == BaseFunnyType.Char)
             return typeBehaviour.GetFromCharToNumberConverterOrNull(to.BaseType);
+        // real → integer per spec §1.1: truncate (toward zero), not banker's round.
+        // GetRealToIntConverterOrNull returns null for non-integer targets; we fall
+        // through to the general numeric converter (which handles real → real etc.).
+        if (from.BaseType == BaseFunnyType.Real)
+        {
+            var realToInt = TypeBehaviour.GetRealToIntConverterOrNull(to.BaseType);
+            if (realToInt != null) return realToInt;
+        }
+        // float32 → integer/char: same truncation as real → integer (spec-consistent, matches
+        // C/Java/Go — Convert.ToXxx(float) does banker's rounding which is a .NET outlier).
+        if (from.BaseType == BaseFunnyType.Float32)
+        {
+            var f32ToInt = TypeBehaviour.GetFloat32ToIntConverterOrNull(to.BaseType);
+            if (f32ToInt != null) return f32ToInt;
+        }
         if (from.IsNumeric())
             return  typeBehaviour.GetNumericConverterOrNull(to.BaseType);
         if (from.BaseType != to.BaseType)
             return null;
         
+        if (from.BaseType == BaseFunnyType.Optional)
+        {
+            var elementConverter = GetConverterOrNull(typeBehaviour, @from.OptionalTypeSpecification.ElementType, to.OptionalTypeSpecification.ElementType);
+            if (elementConverter == null)
+                return null;
+            if (elementConverter == NoConvertion)
+                return NoConvertion;
+            return o => o is FunnyNone ? o : elementConverter(o);
+        }
+
         if (from.BaseType == BaseFunnyType.ArrayOf)
         {
             if (to == FunnyType.ArrayOf(FunnyType.Any))
@@ -136,14 +206,33 @@ public static class VarTypeConverter {
 
         if (from.BaseType == BaseFunnyType.Struct)
         {
-            foreach (var (key, value) in to.StructTypeSpecification)
+            var fieldConverters = new Dictionary<string, Func<object, object>>(StringComparer.InvariantCultureIgnoreCase);
+            bool needsConversion = false;
+            foreach (var (key, toFieldType) in to.StructTypeSpecification)
             {
                 if (!from.StructTypeSpecification.TryGetValue(key, out var fromFieldType))
                     return null;
-                if (!value.Equals(fromFieldType))
+                var fieldConverter = GetConverterOrNull(typeBehaviour, fromFieldType, toFieldType);
+                if (fieldConverter == null)
                     return null;
+                fieldConverters[key] = fieldConverter;
+                if (!fromFieldType.Equals(toFieldType))
+                    needsConversion = true;
             }
-            return NoConvertion;
+            if (!needsConversion)
+                return NoConvertion;
+            return o => {
+                var origin = (FunnyStruct)o;
+                var fields = new FunnyStruct.FieldsDictionary(origin.Count);
+                foreach (var (key, value) in origin)
+                {
+                    if (fieldConverters.TryGetValue(key, out var converter))
+                        fields[key] = converter(value);
+                    else
+                        fields[key] = value;
+                }
+                return new FunnyStruct(fields);
+            };
         }
         return null;
     }
@@ -159,6 +248,21 @@ public static class VarTypeConverter {
         while (true)
         {
             if (to.IsText) return true;
+
+            // None → Optional(T) is always valid
+            if (from.BaseType == BaseFunnyType.None && to.BaseType == BaseFunnyType.Optional)
+                return true;
+
+            // NamedStruct ↔ Struct: always compatible at runtime
+            if ((to.BaseType == BaseFunnyType.NamedStruct && from.BaseType == BaseFunnyType.Struct) ||
+                (from.BaseType == BaseFunnyType.NamedStruct && to.BaseType == BaseFunnyType.Struct) ||
+                (from.BaseType == BaseFunnyType.NamedStruct && to.BaseType == BaseFunnyType.NamedStruct))
+                return true;
+
+            // T → Optional(T) - implicit wrapping
+            if (to.BaseType == BaseFunnyType.Optional && from.BaseType != BaseFunnyType.Optional)
+                return CanBeConverted(from, to.OptionalTypeSpecification.ElementType);
+
             if (to.BaseType == from.BaseType)
             {
                 switch (to.BaseType)
@@ -167,13 +271,30 @@ public static class VarTypeConverter {
                         @from = @from.ArrayTypeSpecification.FunnyType;
                         to = to.ArrayTypeSpecification.FunnyType;
                         continue;
-                    //Check for Fun and struct types is quite expensive, so there is no big reason to write optimized code  
+                    case BaseFunnyType.Optional:
+                        @from = @from.OptionalTypeSpecification.ElementType;
+                        to = to.OptionalTypeSpecification.ElementType;
+                        continue;
+                    //Check for Fun and struct types is quite expensive, so there is no big reason to write optimized code
                     case BaseFunnyType.Fun:
                         return GetConverterOrNull(Dialects.Origin.Converter.TypeBehaviour, @from, to) != null;
                     case BaseFunnyType.Struct:
                         return GetConverterOrNull(Dialects.Origin.Converter.TypeBehaviour, @from, to) != null;
                 }
             }
+
+            // Custom types: convert only to same custom, Any, or Text (handled above)
+            if (from.BaseType == BaseFunnyType.Custom || to.BaseType == BaseFunnyType.Custom)
+                return from.BaseType == BaseFunnyType.Custom && to.BaseType == BaseFunnyType.Custom
+                    && Equals(from.CustomTypeDefinition, to.CustomTypeDefinition);
+
+            // NamedStruct: same name = convertible; otherwise only to Any/Text (handled above)
+            if (from.BaseType == BaseFunnyType.NamedStruct || to.BaseType == BaseFunnyType.NamedStruct)
+                return from.BaseType == BaseFunnyType.NamedStruct && to.BaseType == BaseFunnyType.NamedStruct
+                    && string.Equals(from.NamedStructTypeName, to.NamedStructTypeName, StringComparison.OrdinalIgnoreCase);
+
+            if ((int)from.BaseType >= PrimitiveTypeCount || (int)to.BaseType >= PrimitiveTypeCount)
+                return false;
 
             return PrimitiveConvertMap[(int)from.BaseType, (int)to.BaseType];
         }

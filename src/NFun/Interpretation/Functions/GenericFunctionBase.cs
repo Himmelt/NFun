@@ -11,6 +11,21 @@ public abstract class GenericFunctionBase : IGenericFunction {
     private readonly int _maxGenericId;
     public string Name { get; }
     public FunnyType[] ArgTypes { get; }
+    /// <summary>
+    /// True when the function is reachable only via piped syntax under
+    /// <see cref="ExtensionFunctionsSeparation.Enabled"/>. Set via the
+    /// <see cref="FunctionSignatureDescription"/> constructor; defaults to
+    /// false for the legacy constructors (bi-callable).
+    /// </summary>
+    public bool IsExtension { get; }
+
+    /// <summary>
+    /// Maps <see cref="IsExtension"/> to <see cref="CallStyle"/>:
+    /// true → <see cref="CallStyle.Extension"/>; false → <see cref="CallStyle.Both"/>.
+    /// Built-ins never declare <see cref="CallStyle.Direct"/> intrinsically —
+    /// that's reserved for user-defined functions tagged by RuntimeBuilder.
+    /// </summary>
+    public CallStyle CallStyle => IsExtension ? CallStyle.Extension : CallStyle.Both;
 
     protected GenericFunctionBase(
         string name, FunnyType returnType,
@@ -58,8 +73,38 @@ public abstract class GenericFunctionBase : IGenericFunction {
         if (!maxGenericId.HasValue)
             throw new InvalidOperationException($"Type {name} has wrong generic definition");
     }
+
+    /// <summary>
+    /// Descriptor-based constructor. Carries <see cref="FunctionSignatureDescription.IsExtension"/>
+    /// to drive <see cref="CallStyle"/>, plus optional explicit
+    /// <see cref="FunctionSignatureDescription.Constrains"/>. Future signature
+    /// metadata (vararg, etc.) plugs in via the descriptor without churning
+    /// every concrete constructor.
+    /// </summary>
+    protected GenericFunctionBase(FunctionSignatureDescription signature) {
+        Name = signature.Name;
+        ArgTypes = signature.InputTypes;
+        ReturnType = signature.OutputType;
+        IsExtension = signature.IsExtension;
+        var maxGenericId = signature.InputTypes
+                           .Append(signature.OutputType)
+                           .Max(i => i.SearchMaxGenericTypeId());
+        if (!maxGenericId.HasValue)
+            throw new InvalidOperationException($"Type {signature.Name} has wrong generic definition");
+        if (signature.Constrains != null) {
+            Constrains = signature.Constrains;
+        } else {
+            Constrains = new GenericConstrains[maxGenericId.Value + 1];
+            for (int i = 0; i <= maxGenericId; i++)
+                Constrains[i] = GenericConstrains.Any;
+        }
+        _maxGenericId = maxGenericId.Value;
+        if (signature.ArgProperties != null)
+            ArgProperties = signature.ArgProperties;
+    }
     
     public FunnyType ReturnType { get; }
+    public FunArgProperty[] ArgProperties { get; protected init; }
 
     protected virtual object Calc(object[] args) => throw new NotImplementedException();
 
@@ -68,6 +113,7 @@ public abstract class GenericFunctionBase : IGenericFunction {
             calc: Calc,
             name: Name,
             returnType: FunnyType.SubstituteConcreteTypes(ReturnType, concreteTypesMap),
+            argProperties: ArgProperties,
             argTypes: SubstitudeArgTypes(concreteTypesMap));
 
     protected FunnyType[] SubstitudeArgTypes(FunnyType[] concreteTypes) {
@@ -112,6 +158,7 @@ public abstract class GenericFunctionBase : IGenericFunction {
             calc: Calc,
             name: Name,
             returnType: FunnyType.SubstituteConcreteTypes(ReturnType, solvingParams),
+            argProperties: ArgProperties,
             argTypes: SubstitudeArgTypes(solvingParams));
     }
 
@@ -136,6 +183,11 @@ public abstract class GenericFunctionBase : IGenericFunction {
                 result[id.Value] = concrete;
                 return true;
             }
+
+            if (genericOrConcrete.OptionalTypeSpecification != null)
+                return SubstitudeType(
+                    genericOrConcrete.OptionalTypeSpecification.ElementType,
+                    concrete.OptionalTypeSpecification.ElementType);
 
             if (genericOrConcrete.ArrayTypeSpecification != null)
                 return SubstitudeType(
@@ -167,12 +219,16 @@ public abstract class GenericFunctionBase : IGenericFunction {
         private readonly Func<object[], object> _calc;
 
         public ConcreteGenericFunction(
-            Func<object[], object> calc, string name, FunnyType returnType, params FunnyType[] argTypes)
-            : base(TypeHelper.GetFunSignature(name, returnType, argTypes), returnType, argTypes) =>
+            Func<object[], object> calc, string name, FunnyType returnType,
+            FunArgProperty[] argProperties, params FunnyType[] argTypes)
+            : base(TypeHelper.GetFunSignature(name, returnType, argTypes), returnType, argTypes) {
             _calc = calc;
+            ArgProperties = argProperties;
+        }
 
         public override object Calc(object[] args) => _calc(args);
-        public override IConcreteFunction Clone(ICloneContext context) => new ConcreteGenericFunction(_calc, Name, ReturnType, ArgTypes);
+        public override IConcreteFunction Clone(ICloneContext context) =>
+            new ConcreteGenericFunction(_calc, Name, ReturnType, ArgProperties, ArgTypes);
         
         public override string ToString()
             => $"FUN-concrete-generic {TypeHelper.GetFunSignature(Name, ReturnType, ArgTypes)}";

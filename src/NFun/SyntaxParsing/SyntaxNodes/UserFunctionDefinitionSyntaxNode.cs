@@ -9,18 +9,20 @@ public class UserFunctionDefinitionSyntaxNode : ISyntaxNode {
         IList<TypedVarDefSyntaxNode> arguments,
         FunCallSyntaxNode headNode,
         ISyntaxNode expression,
-        FunnyType returnType) {
+        TypeSyntax returnTypeSyntax) {
         Args = arguments;
         Head = headNode;
-        ReturnType = returnType;
+        ReturnTypeSyntax = returnTypeSyntax;
         Body = expression;
     }
     public FunnyType OutputType { get; set; }
     public int OrderNumber { get; set; }
     public int ParenthesesCount { get; set; }
-    public FunnyType ReturnType { get; }
+    public TypeSyntax ReturnTypeSyntax { get; }
     public FunCallSyntaxNode Head { get; }
     public bool IsRecursive { get; set; } = true;
+    /// <summary>True when defined with piped syntax: x.f() = expr (extension function).</summary>
+    public bool IsExtension => Head.IsPipeForward;
     public string Id => Head.Id;
     public IList<TypedVarDefSyntaxNode> Args { get; }
     public ISyntaxNode Body { get; }

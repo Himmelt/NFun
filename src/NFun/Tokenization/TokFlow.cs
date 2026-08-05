@@ -10,6 +10,8 @@ public class TokFlow {
 
     private readonly Tok[] _tokens;
 
+    public TokFlow(Tok[] tokens) => _tokens = tokens;
+
     public TokFlow(IEnumerable<Tok> tokens) => _tokens = tokens.ToArray();
 
     public bool IsDone => _tokens.Length <= CurrentTokenPosition;
@@ -32,6 +34,12 @@ public class TokFlow {
     public Tok Current => IsDone ? CurrentAfterEofFlowTok : _tokens[CurrentTokenPosition];
     public bool IsStart => CurrentTokenPosition == 0;
     public Tok Previous => IsStart ? PreviousBeforeFlowTok : _tokens[CurrentTokenPosition - 1];
+
+    /// <summary>
+    /// When true, ':' after an identifier is NOT parsed as a type annotation.
+    /// Used inside array bracket context where ':' means slice.
+    /// </summary>
+    public bool SuppressTypeAnnotation { get; set; }
 
     public bool SkipNewLines() {
         bool result = false;
@@ -100,6 +108,8 @@ public class TokFlow {
             return false;
         return _tokens[CurrentTokenPosition - 1].Type == tokType;
     }
+
+    public Tok GetTokenAt(int position) => _tokens[position];
 
     public override string ToString() {
         var sb = new StringBuilder("Flow [ ");

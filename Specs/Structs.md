@@ -5,7 +5,7 @@ Each such value is called a **field**. Each field has an identifier, type, and v
 
 ## Structure initialization `{}` 
 
-Initlalizes structure with specified fields 
+Initializes structure with specified fields.
 
 To create a structure, you need to list the field id (separated by commas or on separate lines) inside curly brackets and initialize them with values in the same way as output variables are initialized
 ```
@@ -31,6 +31,15 @@ The `.` operator is used to access the value of the structure field.
 id =  user.name #Access to field 'name' in struct 'user'
 
 z =  user.stats.coasts # Nested access
+```
+
+## Field names
+
+Any identifier can be a field name, including primitive-type keywords (`int`, `real`, `bool`, `text`, `char`, etc.) — context disambiguates
+
+```py
+c = {real = 1.0, imag = 2.0}     # field named 'real' of type real
+y = c.real                       # 1.0
 ```
 
 ## Immutability

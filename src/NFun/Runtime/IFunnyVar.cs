@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using NFun.Runtime.Arrays;
 using NFun.SyntaxParsing;
 using NFun.Tokenization;
@@ -80,7 +79,7 @@ public class VariableSource : IFunnyVar {
         FunnyVarAccess access,
         FunnyConverter funnyConverter,
         FunnyAttribute[] attributes = null) {
-        _id = Interlocked.Increment(ref _usedCount);
+        _id = ++_usedCount;
 
         _access = access;
         _funnyConverter = funnyConverter;
@@ -96,7 +95,7 @@ public class VariableSource : IFunnyVar {
         FunnyVarAccess access,
         FunnyConverter funnyConverter,
         FunnyAttribute[] attributes = null) {
-        _id = Interlocked.Increment(ref _usedCount);
+        _id = ++_usedCount;
 
         _access = access;
         _funnyConverter = funnyConverter;
@@ -133,6 +132,18 @@ public class VariableSource : IFunnyVar {
 
     internal VariableSource Clone() => new(Name, Type, _access, _funnyConverter, Attributes);
 
+    /// <summary>
+    /// Clone with the current `_funnyValue` snapshotted into the new instance.
+    /// Used by closure-capture: when a rule is emitted from an enclosing function call,
+    /// each captured outer variable is snapshotted so subsequent outer-call writes
+    /// don't mutate the already-returned closure (Specs/Rules.md "Capturing variables").
+    /// </summary>
+    internal VariableSource CloneWithValueSnapshot() {
+        var clone = new VariableSource(Name, Type, _access, _funnyConverter, Attributes);
+        clone._funnyValue = _funnyValue;
+        return clone;
+    }
+
     public Func<T> CreateGetterOf<T>() {
         if (!IsOutput)
             throw new NotSupportedException("Cannot create value getter for non output variable");
@@ -162,17 +173,27 @@ public class VariableSource : IFunnyVar {
 
 
     private object GetDefaultValueOrNullFor(FunnyType type) {
+        if (type.BaseType == BaseFunnyType.Custom)
+            return type.CustomTypeDefinition?.DefaultValue;
+        // NamedStruct and Struct have no default value (no primitive default).
+        if (type.BaseType == BaseFunnyType.NamedStruct
+            || type.BaseType == BaseFunnyType.Struct)
+            return null;
+
         var defaultValue = _funnyConverter.TypeBehaviour.GetDefaultPrimitiveValueOrNull(type.BaseType);
         if (defaultValue != null)
             return defaultValue;
+
+        // Optional and None default to FunnyNone sentinel
+        if (type.BaseType is BaseFunnyType.Optional or BaseFunnyType.None)
+            return FunnyNone.Instance;
 
         if (type.ArrayTypeSpecification == null)
             return null;
 
         var arr = type.ArrayTypeSpecification;
-        if (arr.FunnyType.BaseType == BaseFunnyType.Char)
-            return TextFunnyArray.Empty;
-        return new ImmutableFunnyArray(Array.Empty<object>(), arr.FunnyType);
+
+        return FunnyArrayTools.CreateEmptyArray(arr.FunnyType);
     }
 }
 

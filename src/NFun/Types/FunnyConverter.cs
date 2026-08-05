@@ -18,6 +18,7 @@ public class FunnyConverter {
     public TypeBehaviour TypeBehaviour { get; }
     public static readonly FunnyConverter RealIsDouble = new(TypeBehaviour.RealIsDouble);
     public static readonly FunnyConverter RealIsDecimal = new(TypeBehaviour.RealIsDecimal);
+    public static readonly FunnyConverter RealIsDoubleWithFloatFamily = new(TypeBehaviour.RealIsDoubleWithFloatFamily);
     
     private FunnyConverter(TypeBehaviour typeBehaviour) => TypeBehaviour = typeBehaviour;
 
@@ -41,8 +42,33 @@ public class FunnyConverter {
         _inputTypeFromPair.Count +
         _inputTypeFromClr.Count;
     
+    /// <summary>Custom type registry — checked before struct/class reflection path.</summary>
+    internal ICustomTypeRegistry CustomTypes { get; private set; } = EmptyCustomTypeRegistry.Instance;
+
+    /// <summary>
+    /// Creates a new FunnyConverter with custom types registered.
+    /// Does NOT mutate the original — returns a fresh instance.
+    /// </summary>
+    internal FunnyConverter WithCustomTypes(ICustomTypeRegistry customTypes) {
+        if (customTypes == null || customTypes.IsEmpty)
+            return this;
+        var clone = new FunnyConverter(TypeBehaviour);
+        clone.CustomTypes = customTypes;
+        return clone;
+    }
+
     public object ConvertInputOrThrow(object clrValue, FunnyType resultFunnyType) {
+        if (clrValue == null)
+        {
+            if (resultFunnyType.BaseType is BaseFunnyType.Optional or BaseFunnyType.None or BaseFunnyType.Any)
+                return FunnyNone.Instance;
+            throw new InvalidCastException($"Cannot set null for non-optional type {resultFunnyType}");
+        }
+
         var clrFromType = clrValue.GetType();
+        // Custom types: identity conversion — CLR value passes through as-is
+        if (resultFunnyType.BaseType == BaseFunnyType.Custom)
+            return clrValue;
         if (TypeBehaviour.GetClrTypeFor(resultFunnyType.BaseType) == clrFromType)
             return clrValue;
 
@@ -54,6 +80,7 @@ public class FunnyConverter {
         return resultFunnyType.BaseType switch {
                    BaseFunnyType.Any                                  => converter.ToFunObject(clrValue),
                    BaseFunnyType.Bool                                 => Convert.ToBoolean(clrValue),
+                   BaseFunnyType.Int8                                 => Convert.ToSByte(clrValue),
                    BaseFunnyType.Int16                                => Convert.ToInt16(clrValue),
                    BaseFunnyType.Int32                                => Convert.ToInt32(clrValue),
                    BaseFunnyType.Int64                                => Convert.ToInt64(clrValue),
@@ -61,8 +88,8 @@ public class FunnyConverter {
                    BaseFunnyType.UInt16                               => Convert.ToUInt16(clrValue),
                    BaseFunnyType.UInt32                               => Convert.ToUInt32(clrValue),
                    BaseFunnyType.UInt64                               => Convert.ToUInt64(clrValue),
-                   BaseFunnyType.Real when TypeBehaviour.RealType == typeof(double) => Convert.ToDouble(clrValue),
-                   BaseFunnyType.Real                                 => Convert.ToDecimal(clrValue),
+                   BaseFunnyType.Real                                 => TypeBehaviour.ConvertClrValueToReal(clrValue),
+                   BaseFunnyType.Float32                              => Convert.ToSingle(clrValue),
                    BaseFunnyType.Char                                 => clrValue.ToString(),
                    _                                                  => converter.ToFunObject(clrValue)
                };
@@ -91,6 +118,15 @@ public class FunnyConverter {
         return converter;
         
         IOutputFunnyConverter CreateOutputConverterFor(Type clrType, int reqDeepthCheck) {
+            // Custom types: identity converter (CLR value passes through as-is)
+            if (CustomTypes.TryResolveByClrType(clrType, out var customFunnyType))
+                return new PrimitiveTypeOutputFunnyConverter(customFunnyType, clrType);
+
+            if (Nullable.GetUnderlyingType(clrType) is { } underlyingType)
+            {
+                var elementConverter = GetOutputConverterReq(underlyingType, reqDeepthCheck++);
+                return new OptionalOutputFunnyConverter(elementConverter);
+            }
 
             if (clrType.IsArray)
             {
@@ -157,10 +193,25 @@ public class FunnyConverter {
                     var arrayType = elementConverter.ClrType.MakeArrayType();
                     return new ClrArrayOutputFunnyConverter(arrayType, elementConverter);
                 }
+                case BaseFunnyType.Optional:
+                {
+                    var elementConverter = GetOutputConverterFor(funnyType.OptionalTypeSpecification.ElementType);
+                    return new OptionalOutputFunnyConverter(elementConverter);
+                }
+                case BaseFunnyType.None:
+                    return new NoneOutputFunnyConverter();
                 // If output type is struct, but clr type is unknown (for ex in case of hardcore calc)
                 // convert funny struct to an IDictionary<string,object>
                 case BaseFunnyType.Struct:
                     return new StructToDictionaryOutputFunnyConverter(this, funnyType);
+                case BaseFunnyType.NamedStruct:
+                    // Recursion boundary in named types — runtime value is FunnyStruct or null.
+                    // Use dynamic converter since the actual type depends on recursion depth.
+                    return DynamicTypeOutputFunnyConverter.AnyConverter;
+                case BaseFunnyType.Custom:
+                    return new PrimitiveTypeOutputFunnyConverter(funnyType, funnyType.CustomTypeDefinition.DefaultValue.GetType());
+                case BaseFunnyType.Fun:
+                    return new FunOutputFunnyConverter(funnyType);
                 default:
                     throw Errors.TypeCannotBeUsedAsOutputNfunType(funnyType);
             }
@@ -217,6 +268,20 @@ public class FunnyConverter {
                 return new ClrArrayInputTypeFunnyConverter(elementConverter);
             }
 
+            if (funnyType.BaseType == BaseFunnyType.Optional)
+            {
+                var innerClrType = clrTypeOrNull != null
+                    && Nullable.GetUnderlyingType(clrTypeOrNull) is { } underlying
+                        ? underlying
+                        : clrTypeOrNull;
+                var elementConverter = GetInputConverterReq(
+                    innerClrType, funnyType.OptionalTypeSpecification.ElementType, reqDeepthCheck++);
+                return new OptionalInputFunnyConverter(elementConverter);
+            }
+
+            if (funnyType.BaseType == BaseFunnyType.Custom)
+                return new PrimitiveTypeInputFunnyConverter(funnyType);
+
             if (funnyType.BaseType != BaseFunnyType.Struct)
                 return new PrimitiveTypeInputFunnyConverter(FunnyType.Any);
 
@@ -268,6 +333,10 @@ public class FunnyConverter {
         return converter;
         
         IInputFunnyConverter CreateInputConverterFor(Type clrType, int reqDeepthCheck) {
+            // Custom types: identity converter
+            if (CustomTypes.TryResolveByClrType(clrType, out var customFunnyType2))
+                return new PrimitiveTypeInputFunnyConverter(customFunnyType2);
+
             if (clrType == typeof(string))
                 return StringTypeInputFunnyConverter.Instance;
 
@@ -278,6 +347,12 @@ public class FunnyConverter {
                 var elementConverter = GetInputConverterReq(elementType, reqDeepthCheck++);
 
                 return new ClrArrayInputTypeFunnyConverter(elementConverter);
+            }
+
+            if (Nullable.GetUnderlyingType(clrType) is { } underlyingType)
+            {
+                var elementConverter = GetInputConverterReq(underlyingType, reqDeepthCheck++);
+                return new OptionalInputFunnyConverter(elementConverter);
             }
 
             var properties = clrType.GetProperties(BindingFlags.Instance | BindingFlags.Public);

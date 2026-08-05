@@ -4,7 +4,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 
-namespace NFun.Types; 
+namespace NFun.Types;
 
 public enum RealClrType {
     IsDecimal,
@@ -15,6 +15,7 @@ public abstract class TypeBehaviour {
 
     public static readonly TypeBehaviour RealIsDouble =  new RealIsDoubleTypeBehaviour();
     public static readonly TypeBehaviour RealIsDecimal = new RealIsDecimalTypeBehaviour();
+    public static readonly TypeBehaviour RealIsDoubleWithFloatFamily = new F32F64TypeBehaviour();
 
     public abstract IInputFunnyConverter GetPrimitiveInputConverterOrNull(Type clrType);
     public virtual IInputFunnyConverter GetPrimitiveInputConverterOrNull(FunnyType funnyType) =>
@@ -30,6 +31,31 @@ public abstract class TypeBehaviour {
     public abstract T RealTypeSelect<T>(T ifIsDouble, T ifIsDecimal);
     public abstract Type RealType { get; }
 
+    /// <summary>
+    /// True when a real literal `3.14` participates in TIC as a generic constraint
+    /// <c>[F32..Real, Pref=Real]</c> — enables narrowing to Float32 at typed targets.
+    /// False when the literal is pinned to Real.
+    /// </summary>
+    public virtual bool RealLiteralIsGeneric => false;
+
+    /// <summary>
+    /// True when the dialect exposes the IEEE float family (float32/float64 keywords).
+    /// Gates registration of float-family-only functions (toFloat32/toFloat64).
+    /// </summary>
+    public virtual bool SupportsFloatFamily => false;
+
+    /// <summary>
+    /// Adjusts a parsed real literal to match the resolved target type.
+    /// Base: identity. F32-enabled: casts double → float when target is Float32.
+    /// </summary>
+    public virtual object CoerceParsedRealLiteral(object parsed, FunnyType target) => parsed;
+
+    /// <summary>
+    /// Converts an arbitrary CLR numeric value to the backing real type
+    /// (Double, Decimal, or Single-preserving depending on dialect).
+    /// </summary>
+    public abstract object ConvertClrValueToReal(object clrValue);
+
     protected static readonly Func<object, object> ToInt8 = o => Convert.ToSByte(o);
     protected static readonly Func<object, object> ToInt16 = o => Convert.ToInt16(o);
     protected static readonly Func<object, object> ToInt32 = o => Convert.ToInt32(o);
@@ -38,6 +64,158 @@ public abstract class TypeBehaviour {
     protected static readonly Func<object, object> ToUInt16 = o => Convert.ToUInt16(o);
     protected static readonly Func<object, object> ToUInt32 = o => Convert.ToUInt32(o);
     protected static readonly Func<object, object> ToUInt64 = o => Convert.ToUInt64(o);
+    protected static readonly Func<object, object> ToFloat32 = o => Convert.ToSingle(o);
+
+    // real → integer per PRAGMATIC matrix §1.1: silent truncation (toward zero)
+    // — 1.5 → 1, -1.5 → -1, NOT banker's round. Convert.ToInt32(double) does
+    // banker's round (round-half-to-even), which is .NET's outlier — most
+    // languages (C/C++/Java/Go/Python int()/C# cast `(int)x`) truncate. NaN
+    // and out-of-range values throw OverflowException, which SoftFailureConverter
+    // catches as `none` for `:T?` targets.
+    private static long TruncateToInt64(object o) {
+        var d = o is decimal m ? (double)m : (double)o;
+        if (double.IsNaN(d) || double.IsInfinity(d) || d >= 9.2233720368547758E+18 || d < -9.2233720368547758E+18)
+            throw new OverflowException($"real {d} cannot be truncated to int64");
+        return (long)d;
+    }
+
+    private static readonly Func<object, object> RealToInt8 = o => {
+        var v = TruncateToInt64(o);
+        if (v < sbyte.MinValue || v > sbyte.MaxValue) throw new OverflowException($"real truncates to {v}, out of int8 range");
+        return (sbyte)v;
+    };
+
+    private static readonly Func<object, object> RealToInt16 = o => {
+        var v = TruncateToInt64(o);
+        if (v < short.MinValue || v > short.MaxValue) throw new OverflowException($"real truncates to {v}, out of int16 range");
+        return (short)v;
+    };
+
+    private static readonly Func<object, object> RealToInt32 = o => {
+        var v = TruncateToInt64(o);
+        if (v < int.MinValue || v > int.MaxValue) throw new OverflowException($"real truncates to {v}, out of int32 range");
+        return (int)v;
+    };
+
+    private static readonly Func<object, object> RealToInt64 = o => TruncateToInt64(o);
+
+    private static readonly Func<object, object> RealToUInt8 = o => {
+        var v = TruncateToInt64(o);
+        if (v < 0 || v > byte.MaxValue) throw new OverflowException($"real truncates to {v}, out of uint8 range");
+        return (byte)v;
+    };
+
+    private static readonly Func<object, object> RealToUInt16 = o => {
+        var v = TruncateToInt64(o);
+        if (v < 0 || v > ushort.MaxValue) throw new OverflowException($"real truncates to {v}, out of uint16 range");
+        return (ushort)v;
+    };
+
+    private static readonly Func<object, object> RealToUInt32 = o => {
+        var v = TruncateToInt64(o);
+        if (v < 0 || v > uint.MaxValue) throw new OverflowException($"real truncates to {v}, out of uint32 range");
+        return (uint)v;
+    };
+
+    private static readonly Func<object, object> RealToUInt64 = o => {
+        // uint64 range exceeds int64 — special-case via decimal/double check directly.
+        var d = o is decimal m ? (double)m : (double)o;
+        if (double.IsNaN(d) || double.IsInfinity(d) || d < 0 || d >= 1.8446744073709552E+19)
+            throw new OverflowException($"real {d} out of uint64 range");
+        return (ulong)d;
+    };
+
+    // Float32 → integer: same truncation semantics as real → integer. Convert.ToXxx(float)
+    // does banker's rounding — .NET outlier vs C/Java/Go/Rust which truncate on cast. Must
+    // match spec Functions.md convert matrix "fractional part silently truncated".
+    private static long TruncateFloat32ToInt64(object o) {
+        var f = (float)o;
+        if (float.IsNaN(f) || float.IsInfinity(f) || f >= 9.2233720368547758E+18f || f < -9.2233720368547758E+18f)
+            throw new OverflowException($"float32 {f} cannot be truncated to int64");
+        return (long)f;
+    }
+    private static readonly Func<object, object> Float32ToInt8 = o => {
+        var v = TruncateFloat32ToInt64(o);
+        if (v < sbyte.MinValue || v > sbyte.MaxValue) throw new OverflowException($"float32 truncates to {v}, out of int8 range");
+        return (sbyte)v;
+    };
+    private static readonly Func<object, object> Float32ToInt16 = o => {
+        var v = TruncateFloat32ToInt64(o);
+        if (v < short.MinValue || v > short.MaxValue) throw new OverflowException($"float32 truncates to {v}, out of int16 range");
+        return (short)v;
+    };
+    private static readonly Func<object, object> Float32ToInt32 = o => {
+        var v = TruncateFloat32ToInt64(o);
+        if (v < int.MinValue || v > int.MaxValue) throw new OverflowException($"float32 truncates to {v}, out of int32 range");
+        return (int)v;
+    };
+    private static readonly Func<object, object> Float32ToInt64 = o => TruncateFloat32ToInt64(o);
+    private static readonly Func<object, object> Float32ToUInt8 = o => {
+        var v = TruncateFloat32ToInt64(o);
+        if (v < 0 || v > byte.MaxValue) throw new OverflowException($"float32 truncates to {v}, out of uint8 range");
+        return (byte)v;
+    };
+    private static readonly Func<object, object> Float32ToUInt16 = o => {
+        var v = TruncateFloat32ToInt64(o);
+        if (v < 0 || v > ushort.MaxValue) throw new OverflowException($"float32 truncates to {v}, out of uint16 range");
+        return (ushort)v;
+    };
+    private static readonly Func<object, object> Float32ToUInt32 = o => {
+        var v = TruncateFloat32ToInt64(o);
+        if (v < 0 || v > uint.MaxValue) throw new OverflowException($"float32 truncates to {v}, out of uint32 range");
+        return (uint)v;
+    };
+    private static readonly Func<object, object> Float32ToUInt64 = o => {
+        var f = (float)o;
+        if (float.IsNaN(f) || float.IsInfinity(f) || f < 0 || f >= 1.8446744073709552E+19f)
+            throw new OverflowException($"float32 {f} out of uint64 range");
+        return (ulong)f;
+    };
+
+    // Float32 → char: Java-style. Truncate f32 → int64, check codepoint range [0..65535], cast.
+    // Spec Functions.md marks f32 → char as 🪂 (soft, throws only on out-of-range).
+    private static readonly Func<object, object> Float32ToChar = o => {
+        var v = TruncateFloat32ToInt64(o);
+        if (v < 0 || v > char.MaxValue) throw new OverflowException($"float32 truncates to {v}, out of char range");
+        return (char)v;
+    };
+
+    /// <summary>
+    /// Numeric converter selector for real source — uses truncating converters per spec
+    /// (versus banker's-rounding Convert.ToInt32). Returns null if the target is not an
+    /// integer type the caller should fall back to the regular `GetNumericConverterOrNull`.
+    /// </summary>
+    public static Func<object, object> GetRealToIntConverterOrNull(BaseFunnyType to) =>
+        to switch {
+            BaseFunnyType.UInt8  => RealToUInt8,
+            BaseFunnyType.UInt16 => RealToUInt16,
+            BaseFunnyType.UInt32 => RealToUInt32,
+            BaseFunnyType.UInt64 => RealToUInt64,
+            BaseFunnyType.Int8   => RealToInt8,
+            BaseFunnyType.Int16  => RealToInt16,
+            BaseFunnyType.Int32  => RealToInt32,
+            BaseFunnyType.Int64  => RealToInt64,
+            _ => null
+        };
+
+    /// <summary>
+    /// Numeric converter selector for float32 source — same truncation semantics as
+    /// GetRealToIntConverterOrNull. Also handles f32 → char (via int64 truncation).
+    /// Returns null for non-integer / non-char targets (caller falls back to numeric widening).
+    /// </summary>
+    public static Func<object, object> GetFloat32ToIntConverterOrNull(BaseFunnyType to) =>
+        to switch {
+            BaseFunnyType.UInt8  => Float32ToUInt8,
+            BaseFunnyType.UInt16 => Float32ToUInt16,
+            BaseFunnyType.UInt32 => Float32ToUInt32,
+            BaseFunnyType.UInt64 => Float32ToUInt64,
+            BaseFunnyType.Int8   => Float32ToInt8,
+            BaseFunnyType.Int16  => Float32ToInt16,
+            BaseFunnyType.Int32  => Float32ToInt32,
+            BaseFunnyType.Int64  => Float32ToInt64,
+            BaseFunnyType.Char   => Float32ToChar,
+            _ => null
+        };
     protected static readonly Func<object, object> ToBool = o => Convert.ToBoolean(o);
     protected static readonly Func<object, object> ToChar = o =>
         o switch {
@@ -45,47 +223,59 @@ public abstract class TypeBehaviour {
             decimal dec => Convert.ToChar((long)dec),
             _           => Convert.ToChar(o)
         };
-    
+
     protected  static readonly Type[] FunToClrTypesMap = {
-        null,
-        typeof(char),
-        typeof(bool),
-        typeof(byte),
-        typeof(ushort),
-        typeof(uint),
-        typeof(ulong),
-        typeof(short),
-        typeof(int),
-        typeof(long),
-        typeof(double),
-        typeof(IPAddress),
-        null,
-        null,
-        null,
-        typeof(object),
-        null
+        null,              //  0 Empty
+        typeof(char),      //  1 Char
+        typeof(bool),      //  2 Bool
+        typeof(byte),      //  3 UInt8
+        typeof(ushort),    //  4 UInt16
+        typeof(uint),      //  5 UInt32
+        typeof(ulong),     //  6 UInt64
+        typeof(short),     //  7 Int16
+        typeof(int),       //  8 Int32
+        typeof(long),      //  9 Int64
+        typeof(double),    // 10 Real
+        typeof(IPAddress), // 11 Ip
+        null,              // 12 ArrayOf
+        null,              // 13 Fun
+        null,              // 14 Generic
+        typeof(object),    // 15 Any
+        null,              // 16 Struct
+        null,              // 17 Optional
+        null,              // 18 None
+        null,              // 19 Custom
+        null,              // 20 NamedStruct
+        typeof(sbyte),     // 21 Int8
+        typeof(float),     // 22 Float32
     };
-    
+
     protected static readonly object[] DefaultPrimitiveValues = {
-        null,
-        default(char),
-        default(bool),
-        default(byte),
-        default(ushort),
-        default(uint),
-        default(ulong),
-        default(short),
-        default(int),
-        default(long),
-        default(double),
-        new IPAddress(new byte[]{127,0,0,1}),
-        null,
-        null,
-        null,
-        new(),
-        null
+        null,                                //  0 Empty
+        default(char),                       //  1 Char
+        default(bool),                       //  2 Bool
+        default(byte),                       //  3 UInt8
+        default(ushort),                     //  4 UInt16
+        default(uint),                       //  5 UInt32
+        default(ulong),                      //  6 UInt64
+        default(short),                      //  7 Int16
+        default(int),                        //  8 Int32
+        default(long),                       //  9 Int64
+        default(double),                     // 10 Real
+        new IPAddress(new byte[]{127,0,0,1}),// 11 Ip
+        null,                                // 12 ArrayOf
+        null,                                // 13 Fun
+        null,                                // 14 Generic
+        new(),                               // 15 Any
+        null,                                // 16 Struct
+        null,                                // 17 Optional
+        null,                                // 18 None
+        null,                                // 19 Custom
+        null,                                // 20 NamedStruct
+        default(sbyte),                      // 21 Int8
+        default(float),                      // 22 Float32
     };
-    
+
     private static readonly IReadOnlyDictionary<BaseFunnyType, IInputFunnyConverter> PrimitiveInputConvertersByName
         = new Dictionary<BaseFunnyType, IInputFunnyConverter> {
             { BaseFunnyType.Ip, new PrimitiveTypeInputFunnyConverter(FunnyType.Ip)},
@@ -95,12 +285,14 @@ public abstract class TypeBehaviour {
             { BaseFunnyType.UInt16, new PrimitiveTypeInputFunnyConverter(FunnyType.UInt16) },
             { BaseFunnyType.UInt32, new PrimitiveTypeInputFunnyConverter(FunnyType.UInt32) },
             { BaseFunnyType.UInt64, new PrimitiveTypeInputFunnyConverter(FunnyType.UInt64) },
+            { BaseFunnyType.Int8, new PrimitiveTypeInputFunnyConverter(FunnyType.Int8) },
             { BaseFunnyType.Int16, new PrimitiveTypeInputFunnyConverter(FunnyType.Int16) },
             { BaseFunnyType.Int32, new PrimitiveTypeInputFunnyConverter(FunnyType.Int32) },
             { BaseFunnyType.Int64, new PrimitiveTypeInputFunnyConverter(FunnyType.Int64) },
+            { BaseFunnyType.Float32, new PrimitiveTypeInputFunnyConverter(FunnyType.Float32) },
             { BaseFunnyType.Real, new PrimitiveTypeInputFunnyConverter(FunnyType.Real) },
         };
-    
+
 
     private static readonly IOutputFunnyConverter BoolConverter   = new PrimitiveTypeOutputFunnyConverter(FunnyType.Bool, typeof(bool));
     private static readonly IOutputFunnyConverter CharConverter   = new PrimitiveTypeOutputFunnyConverter(FunnyType.Char, typeof(Char));
@@ -109,9 +301,11 @@ public abstract class TypeBehaviour {
     private static readonly IOutputFunnyConverter Uint16Converter = new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt16, typeof(UInt16));
     private static readonly IOutputFunnyConverter Uint32Converter = new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt32, typeof(UInt32));
     private static readonly IOutputFunnyConverter Uint64Converter = new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt64, typeof(UInt64));
+    private static readonly IOutputFunnyConverter Int8Converter   = new PrimitiveTypeOutputFunnyConverter(FunnyType.Int8, typeof(sbyte));
     private static readonly IOutputFunnyConverter Int16Converter  = new PrimitiveTypeOutputFunnyConverter(FunnyType.Int16, typeof(Int16));
     private static readonly IOutputFunnyConverter Int32Converter  = new PrimitiveTypeOutputFunnyConverter(FunnyType.Int32, typeof(Int32));
     private static readonly IOutputFunnyConverter Int64Converter  = new PrimitiveTypeOutputFunnyConverter(FunnyType.Int64, typeof(Int64));
+    private static readonly IOutputFunnyConverter Float32Converter= new PrimitiveTypeOutputFunnyConverter(FunnyType.Float32, typeof(float));
 
     protected static IOutputFunnyConverter GetPrimitiveOutputConverterOrNull(BaseFunnyType baseType) =>
         baseType switch
@@ -124,22 +318,29 @@ public abstract class TypeBehaviour {
             BaseFunnyType.UInt16 => Uint16Converter,
             BaseFunnyType.UInt32 => Uint32Converter,
             BaseFunnyType.UInt64 => Uint64Converter,
+            BaseFunnyType.Int8   => Int8Converter,
             BaseFunnyType.Int16  => Int16Converter,
             BaseFunnyType.Int32  => Int32Converter,
             BaseFunnyType.Int64  => Int64Converter,
+            BaseFunnyType.Float32 => Float32Converter,
             _                    => null
         };
-    
-    
+
+
     protected static int GetUnicodeBytes(object o1, out byte[] bytes) {
         var chars = new[] { (char)o1 };
         bytes = new byte[8];
         return Encoding.Unicode.GetBytes(chars,0,1,bytes,0);
     }
-    
+
     public Func<object, object> GetFromCharToNumberConverterOrNull(BaseFunnyType to) =>
         to switch {
             BaseFunnyType.UInt8 => o => Convert.ToByte((char)o),
+            BaseFunnyType.Int8  => o => {
+                var b = (char)o;
+                if (b > sbyte.MaxValue) throw new OverflowException($"Cannot convert char '{o}' to int8");
+                return (sbyte)b;
+            },
             BaseFunnyType.UInt16 => o => GetUnicodeBytes(o, out var bytes) > 2
                 ? throw new OverflowException($"Cannot convert char value '{o}' to unt16")
                 : BitConverter.ToUInt16(bytes, 0),
@@ -161,6 +362,7 @@ public abstract class TypeBehaviour {
                 return BitConverter.ToInt64(bytes, 0);
             },
             BaseFunnyType.Real => FromCharToRealConverter,
+            BaseFunnyType.Float32 => o => (float)(char)o,
             _                  => null
         };
 
@@ -177,6 +379,7 @@ public class RealIsDoubleTypeBehaviour : TypeBehaviour {
             { typeof(UInt16), new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt16, typeof(UInt16)) },
             { typeof(UInt32), new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt32, typeof(UInt32)) },
             { typeof(UInt64), new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt64, typeof(UInt64)) },
+            { typeof(sbyte), new PrimitiveTypeOutputFunnyConverter(FunnyType.Int8, typeof(sbyte)) },
             { typeof(Int16), new PrimitiveTypeOutputFunnyConverter(FunnyType.Int16, typeof(Int16)) },
             { typeof(Int32), new PrimitiveTypeOutputFunnyConverter(FunnyType.Int32, typeof(Int32)) },
             { typeof(Int64), new PrimitiveTypeOutputFunnyConverter(FunnyType.Int64, typeof(Int64)) },
@@ -185,7 +388,7 @@ public class RealIsDoubleTypeBehaviour : TypeBehaviour {
             { typeof(Decimal), new DoubleToDecimalTypeOutputFunnyConverter() },
             { typeof(IPAddress), new PrimitiveTypeOutputFunnyConverter(FunnyType.Ip, typeof(IPAddress))}
         };
-    
+
     private static readonly IReadOnlyDictionary<Type, IInputFunnyConverter> PrimitiveInputConvertersByType
         = new Dictionary<Type, IInputFunnyConverter> {
             { typeof(bool), new PrimitiveTypeInputFunnyConverter(FunnyType.Bool) },
@@ -194,6 +397,7 @@ public class RealIsDoubleTypeBehaviour : TypeBehaviour {
             { typeof(UInt16), new PrimitiveTypeInputFunnyConverter(FunnyType.UInt16) },
             { typeof(UInt32), new PrimitiveTypeInputFunnyConverter(FunnyType.UInt32) },
             { typeof(UInt64), new PrimitiveTypeInputFunnyConverter(FunnyType.UInt64) },
+            { typeof(sbyte), new PrimitiveTypeInputFunnyConverter(FunnyType.Int8) },
             { typeof(Int16), new PrimitiveTypeInputFunnyConverter(FunnyType.Int16) },
             { typeof(Int32), new PrimitiveTypeInputFunnyConverter(FunnyType.Int32) },
             { typeof(Int64), new PrimitiveTypeInputFunnyConverter(FunnyType.Int64) },
@@ -202,48 +406,52 @@ public class RealIsDoubleTypeBehaviour : TypeBehaviour {
             { typeof(Decimal), new DecimalToDoubleInputFunnyConverter() },
             { typeof(IPAddress), new PrimitiveTypeInputFunnyConverter(FunnyType.Ip) },
         };
-    
+
     public override IInputFunnyConverter GetPrimitiveInputConverterOrNull(Type clrType) =>
-        PrimitiveInputConvertersByType.TryGetValue(clrType, out var res) 
-            ? res : null;    
-    public override IOutputFunnyConverter GetPrimitiveOutputConverterOrNull(Type clrType) => 
-        PrimitiveOutputConvertersByType.TryGetValue(clrType, out var res) 
+        PrimitiveInputConvertersByType.TryGetValue(clrType, out var res)
             ? res : null;
-    
+    public override IOutputFunnyConverter GetPrimitiveOutputConverterOrNull(Type clrType) =>
+        PrimitiveOutputConvertersByType.TryGetValue(clrType, out var res)
+            ? res : null;
+
     public override IOutputFunnyConverter GetPrimitiveOutputConverterOrNull(FunnyType funnyType) {
         if (funnyType.BaseType == BaseFunnyType.Real)
             return new PrimitiveTypeOutputFunnyConverter(FunnyType.Real, typeof(double));
         return GetPrimitiveOutputConverterOrNull(funnyType.BaseType);
     }
 
-    public override object GetDefaultPrimitiveValueOrNull(BaseFunnyType typeName) => 
-        typeName == BaseFunnyType.Real 
-            ? 0.0 
+    public override object GetDefaultPrimitiveValueOrNull(BaseFunnyType typeName) =>
+        typeName == BaseFunnyType.Real
+            ? 0.0
             : DefaultPrimitiveValues[(int)typeName];
-    
+
     public override Func<object, object> GetNumericConverterOrNull(BaseFunnyType to) =>
         to switch {
             BaseFunnyType.UInt8  => ToUInt8,
             BaseFunnyType.UInt16 => ToUInt16,
             BaseFunnyType.UInt32 => ToUInt32,
             BaseFunnyType.UInt64 => ToUInt64,
+            BaseFunnyType.Int8   => ToInt8,
             BaseFunnyType.Int16  => ToInt16,
             BaseFunnyType.Int32  => ToInt32,
             BaseFunnyType.Int64  => ToInt64,
+            BaseFunnyType.Float32 => ToFloat32,
             BaseFunnyType.Real   => ToDoubleReal,
             BaseFunnyType.Bool   => ToBool,
             BaseFunnyType.Char   => ToChar,
             _                    => null
         };
-    
+
     public override object GetRealConstantValue(ulong d) => (double)d;
     public override object GetRealConstantValue(long d) => (double)d;
     public override object ParseOrNull(string text) => double.TryParse(text,
-        NumberStyles.AllowDecimalPoint|NumberStyles.AllowLeadingSign,
+        NumberStyles.AllowDecimalPoint|NumberStyles.AllowLeadingSign|NumberStyles.AllowExponent,
         CultureInfo.InvariantCulture, out var dbl) ? dbl : null;
     public override Type GetClrTypeFor(BaseFunnyType funnyType) =>
         funnyType != BaseFunnyType.Real ? FunToClrTypesMap[(int)funnyType] : typeof(double);
     public override T RealTypeSelect<T>(T ifIsDouble, T ifIsDecimal) => ifIsDouble;
+
+    public override object ConvertClrValueToReal(object clrValue) => Convert.ToDouble(clrValue);
 
     private static readonly Func<object, object> ToDoubleReal = o => Convert.ToDouble(o);
 
@@ -253,6 +461,34 @@ public class RealIsDoubleTypeBehaviour : TypeBehaviour {
         GetUnicodeBytes(o, out var bytes);
         return (double)BitConverter.ToInt64(bytes,0);
     };
+}
+
+/// <summary>
+/// Real=Double + IEEE float family enabled. CLR `float` maps to Float32
+/// (distinct funny type), real literals participate as generic <c>[F32..Real]</c>
+/// in TIC, and parsed real literals cast down to Single when narrowed to Float32.
+/// </summary>
+public class F32F64TypeBehaviour : RealIsDoubleTypeBehaviour {
+    private static readonly IReadOnlyDictionary<Type, IOutputFunnyConverter> Outputs
+        = new Dictionary<Type, IOutputFunnyConverter> {
+            { typeof(float), new PrimitiveTypeOutputFunnyConverter(FunnyType.Float32, typeof(float)) },
+        };
+    private static readonly IReadOnlyDictionary<Type, IInputFunnyConverter> Inputs
+        = new Dictionary<Type, IInputFunnyConverter> {
+            { typeof(float), new PrimitiveTypeInputFunnyConverter(FunnyType.Float32) },
+        };
+
+    public override IInputFunnyConverter GetPrimitiveInputConverterOrNull(Type clrType) =>
+        Inputs.TryGetValue(clrType, out var res) ? res : base.GetPrimitiveInputConverterOrNull(clrType);
+    public override IOutputFunnyConverter GetPrimitiveOutputConverterOrNull(Type clrType) =>
+        Outputs.TryGetValue(clrType, out var res) ? res : base.GetPrimitiveOutputConverterOrNull(clrType);
+
+    public override bool RealLiteralIsGeneric => true;
+
+    public override bool SupportsFloatFamily => true;
+
+    public override object CoerceParsedRealLiteral(object parsed, FunnyType target) =>
+        target.BaseType == BaseFunnyType.Float32 && parsed is double d ? (object)(float)d : parsed;
 }
 
 public class RealIsDecimalTypeBehaviour : TypeBehaviour {
@@ -265,6 +501,7 @@ public class RealIsDecimalTypeBehaviour : TypeBehaviour {
             { typeof(UInt16),  new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt16, typeof(UInt16)) },
             { typeof(UInt32),  new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt32, typeof(UInt32)) },
             { typeof(UInt64),  new PrimitiveTypeOutputFunnyConverter(FunnyType.UInt64, typeof(UInt64)) },
+            { typeof(sbyte),   new PrimitiveTypeOutputFunnyConverter(FunnyType.Int8, typeof(sbyte)) },
             { typeof(Int16),   new PrimitiveTypeOutputFunnyConverter(FunnyType.Int16, typeof(Int16)) },
             { typeof(Int32),   new PrimitiveTypeOutputFunnyConverter(FunnyType.Int32, typeof(Int32)) },
             { typeof(Int64),   new PrimitiveTypeOutputFunnyConverter(FunnyType.Int64, typeof(Int64)) },
@@ -273,7 +510,7 @@ public class RealIsDecimalTypeBehaviour : TypeBehaviour {
             { typeof(float),   new DecimalToFloatTypeOutputFunnyConverter() },
             { typeof(double),  new DecimalToDoubleTypeOutputFunnyConverter() },
         };
-    
+
     private static readonly IReadOnlyDictionary<Type, IInputFunnyConverter> PrimitiveInputConvertersByType
         = new Dictionary<Type, IInputFunnyConverter> {
             { typeof(bool), new PrimitiveTypeInputFunnyConverter(FunnyType.Bool) },
@@ -282,6 +519,7 @@ public class RealIsDecimalTypeBehaviour : TypeBehaviour {
             { typeof(UInt16), new PrimitiveTypeInputFunnyConverter(FunnyType.UInt16) },
             { typeof(UInt32), new PrimitiveTypeInputFunnyConverter(FunnyType.UInt32) },
             { typeof(UInt64), new PrimitiveTypeInputFunnyConverter(FunnyType.UInt64) },
+            { typeof(sbyte), new PrimitiveTypeInputFunnyConverter(FunnyType.Int8) },
             { typeof(Int16), new PrimitiveTypeInputFunnyConverter(FunnyType.Int16) },
             { typeof(Int32), new PrimitiveTypeInputFunnyConverter(FunnyType.Int32) },
             { typeof(Int64), new PrimitiveTypeInputFunnyConverter(FunnyType.Int64) },
@@ -290,33 +528,34 @@ public class RealIsDecimalTypeBehaviour : TypeBehaviour {
             { typeof(double), new DoubleToDecimalInputFunnyConverter() },
             { typeof(float), new FloatToDecimalInputFunnyConverter() },
         };
-    
+
     private static readonly Func<object, object> ToDecimalReal = o => Convert.ToDecimal(o);
 
     public override IInputFunnyConverter GetPrimitiveInputConverterOrNull(Type clrType) =>
-        PrimitiveInputConvertersByType.TryGetValue(clrType, out var res) 
-            ? res : null;    
-    public override IOutputFunnyConverter GetPrimitiveOutputConverterOrNull(Type clrType) => 
-        PrimitiveOutputConvertersByType.TryGetValue(clrType, out var res) 
+        PrimitiveInputConvertersByType.TryGetValue(clrType, out var res)
             ? res : null;
-   
+    public override IOutputFunnyConverter GetPrimitiveOutputConverterOrNull(Type clrType) =>
+        PrimitiveOutputConvertersByType.TryGetValue(clrType, out var res)
+            ? res : null;
+
     public override IOutputFunnyConverter GetPrimitiveOutputConverterOrNull(FunnyType funnyType) {
         if (funnyType.BaseType == BaseFunnyType.Real)
             return new PrimitiveTypeOutputFunnyConverter(FunnyType.Real, typeof(Decimal));
         return GetPrimitiveOutputConverterOrNull(funnyType.BaseType);
     }
-    
-    public override object GetDefaultPrimitiveValueOrNull(BaseFunnyType typeName) => 
-        typeName == BaseFunnyType.Real 
-            ? decimal.Zero 
+
+    public override object GetDefaultPrimitiveValueOrNull(BaseFunnyType typeName) =>
+        typeName == BaseFunnyType.Real
+            ? decimal.Zero
             : DefaultPrimitiveValues[(int)typeName];
-    
+
     public override Func<object, object> GetNumericConverterOrNull(BaseFunnyType to) =>
         to switch {
             BaseFunnyType.UInt8  => ToUInt8,
             BaseFunnyType.UInt16 => ToUInt16,
             BaseFunnyType.UInt32 => ToUInt32,
             BaseFunnyType.UInt64 => ToUInt64,
+            BaseFunnyType.Int8   => ToInt8,
             BaseFunnyType.Int16  => ToInt16,
             BaseFunnyType.Int32  => ToInt32,
             BaseFunnyType.Int64  => ToInt64,
@@ -325,18 +564,20 @@ public class RealIsDecimalTypeBehaviour : TypeBehaviour {
             BaseFunnyType.Char   => ToChar,
             _                    => null
         };
-    
+
     public override object GetRealConstantValue(ulong d) => new decimal(d);
     public override object GetRealConstantValue(long d) => new decimal(d);
-    public override object ParseOrNull(string text) => decimal.TryParse(text, 
-        NumberStyles.AllowDecimalPoint|NumberStyles.AllowLeadingSign,
+    public override object ParseOrNull(string text) => decimal.TryParse(text,
+        NumberStyles.AllowDecimalPoint|NumberStyles.AllowLeadingSign|NumberStyles.AllowExponent,
         CultureInfo.InvariantCulture, out var dbl) ? dbl : null;
-    
+
     public override Type GetClrTypeFor(BaseFunnyType funnyType) =>
         funnyType != BaseFunnyType.Real ? FunToClrTypesMap[(int)funnyType] : typeof(Decimal);
-    
+
     public override T RealTypeSelect<T>(T ifIsDouble, T ifIsDecimal) => ifIsDecimal;
-    
+
+    public override object ConvertClrValueToReal(object clrValue) => Convert.ToDecimal(clrValue);
+
     protected override Func<object, object> FromCharToRealConverter { get; } = o => {
         GetUnicodeBytes(o, out var bytes);
         return new decimal(BitConverter.ToInt64(bytes, 0));

@@ -8,6 +8,7 @@ namespace NFun.SyntaxTests;
 public class DefaultValueTest {
     [TestCase("y:bool = default", default(bool))]
     [TestCase("y:byte = default", default(byte))]
+    [TestCase("y:int8 = default", default(sbyte))]
     [TestCase("y:uint16 = default", default(UInt16))]
     [TestCase("y:uint32 = default", default(UInt32))]
     [TestCase("y:uint64 = default", default(UInt64))]
@@ -18,6 +19,7 @@ public class DefaultValueTest {
     [TestCase("y:text = default", "")]
     [TestCase("d():bool   = default; y:bool = d()", default(bool))]
     [TestCase("d():byte   = default; y:byte = d()", default(byte))]
+    [TestCase("d():int8   = default; y:int8 = d()", default(sbyte))]
     [TestCase("d():uint16 = default; y:uint16 = d()", default(UInt16))]
     [TestCase("d():uint32 = default; y:uint32 = d()", default(UInt32))]
     [TestCase("d():uint64 = default; y:uint64 = d()", default(UInt64))]
@@ -28,6 +30,7 @@ public class DefaultValueTest {
     [TestCase("d():text   = default; y:text = d()", "")]
     [TestCase("d() = default; y:bool = d()", default(bool))]
     [TestCase("d() = default; y:byte = d()", default(byte))]
+    [TestCase("d() = default; y:int8 = d()", default(sbyte))]
     [TestCase("d() = default; y:uint16 = d()", default(UInt16))]
     [TestCase("d() = default; y:uint32 = d()", default(UInt32))]
     [TestCase("d() = default; y:uint64 = d()", default(UInt64))]
@@ -38,6 +41,7 @@ public class DefaultValueTest {
     [TestCase("d() = default; y:text = d()", "")]
     [TestCase("d(a,b) = default(a,b); y:bool   = d(1,'a')", default(bool))]
     [TestCase("d(a,b) = default(a,b); y:byte   = d(1,'a')", default(byte))]
+    [TestCase("d(a,b) = default(a,b); y:int8   = d(1,'a')", default(sbyte))]
     [TestCase("d(a,b) = default(a,b); y:uint16 = d(1,'a')", default(UInt16))]
     [TestCase("d(a,b) = default(a,b); y:uint32 = d(1,'a')", default(UInt32))]
     [TestCase("d(a,b) = default(a,b); y:uint64 = d(1,'a')", default(UInt64))]
@@ -79,9 +83,22 @@ public class DefaultValueTest {
     public void ConstantCalc(string expression, object expected) =>
         expression.AssertReturns("y", expected);
 
+    // `any ≡ any?` semantically in NFun — any-typed slots can hold none — so
+    // `default` without contextual type information resolves to none, mirroring
+    // the rule for Optional types. Previously the implementation produced a
+    // raw CLR System.Object instance, which was exposed to API consumers as a
+    // useless sentinel. (MR9Bug1.)
     [Test]
     public void DefaultOfAnyConstantTest() =>
-        Assert.IsInstanceOf<object>("default".Calc().Get("out"));
+        Assert.IsNull("default".Calc().Get("out"));
+
+    // Float32 default values — requires FloatFamily opt-in.
+    [TestCase("y:float32 = default", default(float))]
+    [TestCase("y:float64 = default", default(double))]
+    [TestCase("d():float32 = default; y:float32 = d()", default(float))]
+    [TestCase("d() = default; y:float32 = d()", default(float))]
+    public void Float32_DefaultValue(string expression, object expected) =>
+        expression.BuildWithFloats().Calc().AssertReturns("y", expected);
 
     [Test]
     public void ArrayOfIntConstantTest() =>

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Net;
+using NFun.Functions;
 using NFun.SyntaxParsing.SyntaxNodes;
 using NFun.Tokenization;
 
@@ -11,9 +12,9 @@ public static class SyntaxNodeFactory {
     public static ISyntaxNode DefaultValue(Interval interval) =>
         new DefaultValueSyntaxNode(interval);
 
-    public static ISyntaxNode AnonymFunction(ISyntaxNode definition, FunnyType type, ISyntaxNode body) =>
+    public static ISyntaxNode AnonymFunction(ISyntaxNode definition, TypeSyntax typeSyntax, ISyntaxNode body) =>
         new AnonymFunctionSyntaxNode(
-            definition, body, type,
+            definition, body, typeSyntax,
             new Interval(definition.Interval.Start, body.Interval.Finish));
 
     public static ISyntaxNode SuperAnonymFunction(ISyntaxNode body) =>
@@ -49,31 +50,41 @@ public static class SyntaxNodeFactory {
     public static ISyntaxNode ListOf(IList<ISyntaxNode> elements, Interval interval, int parenthesesCount) =>
         new ListOfExpressionsSyntaxNode(elements, parenthesesCount, interval);
 
-    public static TypedVarDefSyntaxNode TypedVar(string name, FunnyType type, int start, int end) =>
-        new(name, type, new Interval(start, end));
+    public static TypedVarDefSyntaxNode TypedVar(string name, TypeSyntax typeSyntax, int start, int end,
+        ISyntaxNode defaultValue = null, bool isParams = false, bool isKeywordOnly = false) =>
+        new(name, typeSyntax, new Interval(start, end), defaultValue, isParams, isKeywordOnly);
 
-    public static ISyntaxNode FunCall(string name, IList<ISyntaxNode> args, int start, int end) =>
-        new FunCallSyntaxNode(name, args.ToArray(), new Interval(start, end), false, false);
+    public static ISyntaxNode FunCall(string name, IList<ISyntaxNode> args, int start, int end,
+        NamedCallArgument[] namedArgs = null, int keywordOnlyNamedStartIndex = -1) =>
+        new FunCallSyntaxNode(name, args.ToArray(), new Interval(start, end), false, false, namedArgs, keywordOnlyNamedStartIndex);
 
     public static ISyntaxNode FunCall(string name, IList<ISyntaxNode> args, Interval interval) =>
         new FunCallSyntaxNode(name, args.ToArray(), interval, false, false);
 
     public static ISyntaxNode PipedFunCall(string name, ISyntaxNode headArg, IList<ISyntaxNode> addArgs, int start,
-        int end) {
+        int end, NamedCallArgument[] namedArgs = null, int keywordOnlyNamedStartIndex = -1) {
         var args = new ISyntaxNode[addArgs.Count + 1];
         args[0] = headArg;
         addArgs.CopyTo(args, 1);
-        return new FunCallSyntaxNode(name, args, new Interval(start, end), true, false);
+        return new FunCallSyntaxNode(name, args, new Interval(start, end), true, false, namedArgs, keywordOnlyNamedStartIndex);
     }
 
     public static ISyntaxNode OperatorCall(string name, ISyntaxNode[] args, int start, int end) =>
         new FunCallSyntaxNode(name, args, new Interval(start, end), false, true);
 
-    public static ISyntaxNode UnarOperatorCall(string name, ISyntaxNode arg, int start, int end) =>
-        new FunCallSyntaxNode(name, new[] { arg }, new Interval(start, end), false, true);
+    public static ISyntaxNode UnarOperatorCall(string name, ISyntaxNode arg, int start, int end) {
+        var op = OperatorEnumHelper.TryParseUnOp(name);
+        return op.HasValue
+            ? new UnaryOperatorSyntaxNode(op.Value, arg, new Interval(start, end))
+            : new FunCallSyntaxNode(name, new[] { arg }, new Interval(start, end), false, true);
+    }
 
-    public static ISyntaxNode BinOperatorCall(string name, ISyntaxNode left, ISyntaxNode right) =>
-        new FunCallSyntaxNode(name, new[] { left, right }, left.Interval.Append(right.Interval), false, true);
+    public static ISyntaxNode BinOperatorCall(string name, ISyntaxNode left, ISyntaxNode right) {
+        var op = OperatorEnumHelper.TryParseBinOp(name);
+        return op.HasValue
+            ? new BinOperatorSyntaxNode(op.Value, left, right, left.Interval.Append(right.Interval))
+            : new FunCallSyntaxNode(name, new[] { left, right }, left.Interval.Append(right.Interval), false, true);
+    }
 
     public static ISyntaxNode Struct(List<EquationSyntaxNode> equations, Interval interval) =>
         new StructInitSyntaxNode(equations, interval);
@@ -82,6 +93,12 @@ public static class SyntaxNodeFactory {
         new StructFieldAccessSyntaxNode(
             leftNode, memberId.Value,
             new Interval(leftNode.Interval.Start, memberId.Finish));
+
+    public static ISyntaxNode SafeFieldAccess(ISyntaxNode leftNode, Tok memberId) =>
+        new StructFieldAccessSyntaxNode(
+            leftNode, memberId.Value,
+            new Interval(leftNode.Interval.Start, memberId.Finish),
+            isSafeAccess: true);
 
     public static EquationSyntaxNode Equation(Tok idToken, ISyntaxNode body) =>
         new(idToken.Value, idToken.Start, body, System.Array.Empty<FunnyAttribute>());
@@ -98,8 +115,8 @@ public static class SyntaxNodeFactory {
         new VarDefinitionSyntaxNode(typed, attributes);
 
     public static ISyntaxNode UserFunctionDef(
-        List<TypedVarDefSyntaxNode> arguments, FunCallSyntaxNode fun, ISyntaxNode expression, FunnyType outputType) =>
-        new UserFunctionDefinitionSyntaxNode(arguments, fun, expression, outputType);
+        List<TypedVarDefSyntaxNode> arguments, FunCallSyntaxNode fun, ISyntaxNode expression, TypeSyntax outputTypeSyntax) =>
+        new UserFunctionDefinitionSyntaxNode(arguments, fun, expression, outputTypeSyntax);
 
     public static ISyntaxNode ComparisonChain(IList<ISyntaxNode> operands, IList<Tok> operators) =>
         new ComparisonChainSyntaxNode(operands, operators);

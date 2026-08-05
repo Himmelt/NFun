@@ -7,10 +7,30 @@ using NFun.Types;
 namespace NFun; 
 
 internal static class BaseFunctions {
-    internal static ImmutableFunctionDictionary GetFunctions(TypeBehaviour typeBehaviour) 
-        => typeBehaviour.RealTypeSelect(DefaultDoubleFunctions,DefaultDecimalFunctions);
-    private static ImmutableFunctionDictionary DefaultDoubleFunctions { get; }
-    private static ImmutableFunctionDictionary DefaultDecimalFunctions { get; }
+    /// <summary>
+    /// Returns the appropriate registry impl per dialect: pipe-independent single-dict
+    /// under <see cref="ExtensionFunctionsSeparation.Disabled"/>, pipe-aware dual-dict
+    /// under <see cref="ExtensionFunctionsSeparation.Enabled"/>.
+    /// </summary>
+    internal static IFunctionRegistry GetFunctions(TypeBehaviour typeBehaviour, ExtensionFunctionsSeparation separation) {
+        // Float-family dialect gets its own registries: they additionally contain
+        // the float-family-only names (toFloat32/toFloat64). RealTypeSelect cannot
+        // discriminate here — F32F64TypeBehaviour selects the double arm.
+        if (typeBehaviour.SupportsFloatFamily)
+            return separation == ExtensionFunctionsSeparation.Enabled
+                ? (IFunctionRegistry)DualFloatFamilyFunctions
+                : SingleFloatFamilyFunctions;
+        return separation == ExtensionFunctionsSeparation.Enabled
+            ? (IFunctionRegistry)typeBehaviour.RealTypeSelect(DualDoubleFunctions, DualDecimalFunctions)
+            : typeBehaviour.RealTypeSelect(SingleDoubleFunctions, SingleDecimalFunctions);
+    }
+
+    private static SingleDictFunctionRegistry SingleDoubleFunctions { get; }
+    private static SingleDictFunctionRegistry SingleDecimalFunctions { get; }
+    private static SingleDictFunctionRegistry SingleFloatFamilyFunctions { get; }
+    private static DualDictFunctionRegistry DualDoubleFunctions { get; }
+    private static DualDictFunctionRegistry DualDecimalFunctions { get; }
+    private static DualDictFunctionRegistry DualFloatFamilyFunctions { get; }
     private static GenericFunctionBase[] GenericFunctions { get; }
     private static IConcreteFunction[] ConcreteFunctions { get; }
     private static IConcreteFunction[] ConcreteDoubleFunctions { get; }
@@ -28,6 +48,10 @@ internal static class BaseFunctions {
             new LessOrEqualFunction(),
             new MinFunction(),
             new MaxFunction(),
+            new SignFunction(),
+
+            new ToHexTextFunction(),
+            new ToBinTextFunction(),
 
             new BitOrFunction(),
             new BitAndFunction(),
@@ -43,6 +67,7 @@ internal static class BaseFunctions {
             new AddFunction(),
             new SubstractFunction(),
             new MultiplyFunction(),
+            new PowFunction(),
             new IsInSingleGenericFunctionDefinition(),
             new UniqueGenericFunctionDefinition(),
             new UniteGenericFunctionDefinition(),
@@ -84,8 +109,38 @@ internal static class BaseFunctions {
             new AllGenericFunctionDefinition(),
             new HasAnyGenericFunctionDefinition(),
             new AnyGenericFunctionDefinition(),
-            new ReverseGenericFunctionDefinition()
-        };
+            new ReverseGenericFunctionDefinition(),
+
+            new NullCoalesceFunction(),
+            new ForceUnwrapFunction(),
+            new SafeGetElementFunction(),
+            new FilterNotNullFunction(),
+            new ThrowErrorFunction(),
+            new OopsFunction0(),
+            new OopsFunction1(),
+            new OopsFunction2(),
+
+            // Math fns generic over Floats (Float32 + Real).
+            new SqrtFunction(),
+            new SinFunction(),
+            new CosFunction(),
+            new TanFunction(),
+            new AsinFunction(),
+            new AcosFunction(),
+            new AtanFunction(),
+            new Atan2Function(),
+            new ExpFunction(),
+            new LogEFunction(),
+            new LogFunction(),
+            new Log10Function(),
+            new CeilFunction(),
+            new FloorFunction(),
+            new RoundFunction(),
+            new AverageFunction(),
+            new DivideFunction(),
+        }
+        // issue #135
+        .Concat(ToNumericFunctions.CreateBaseFamily()).ToArray();
 
         ConcreteFunctions = new IConcreteFunction[] {
             new NotFunction(),
@@ -94,6 +149,11 @@ internal static class BaseFunctions {
             new XorFunction(),
 
             new ToTextFunction(),
+            new ToNumTextFunction(),
+            new ToSciTextFunction(),
+            new PadLeftTextFunction(),
+            new PadRightTextFunction(),
+            new PadCenterTextFunction(),
 
             new TrimFunction(),
             new TrimStartFunction(),
@@ -109,50 +169,18 @@ internal static class BaseFunctions {
             new Concat3TextsFunction(),
         };
 
-        ConcreteDoubleFunctions = new IConcreteFunction[] {
-            new AverageDoubleFunction(),
-
-            new PowDoubleFunction(),
-            new DivideDoubleFunction(),
-            new SqrtDoubleFunction(),
-            new SinDoubleFunction(),
-            new CosDoubleFunction(),
-            new TanDoubleFunction(),
-            new AtanDoubleFunction(),
-            new Atan2DoubleFunction(),
-            new AsinDoubleFunction(),
-            new AcosDoubleFunction(),
-            new ExpDoubleFunction(),
-            new LogDoubleFunction(),
-            new LogEDoubleFunction(),
-            new Log10DoubleFunction(),
-            new RoundToDoubleFunction(),
-        };
-
-        ConcreteDecimalFunctions = new IConcreteFunction[] {
-            new AverageDecimalFunction(),
-
-            new PowDecimalFunction(),
-            new DivideDecimalFunction(),
-            new SqrtDecimalFunction(),
-            new SinDecimalFunction(),
-            new CosDecimalFunction(),
-            new TanDecimalFunction(),
-            new AtanDecimalFunction(),
-            new Atan2DecimalFunction(),
-            new AsinDecimalFunction(),
-            new AcosDecimalFunction(),
-            new ExpDecimalFunction(),
-            new LogDecimalFunction(),
-            new LogEDecimalFunction(),
-            new Log10DecimalFunction(),
-            new RoundToDecimalFunction(),
-        };
-        DefaultDoubleFunctions = new ImmutableFunctionDictionary(
-            ConcreteFunctions.Concat(ConcreteDoubleFunctions).ToArray(),
-            GenericFunctions);
-        DefaultDecimalFunctions = new ImmutableFunctionDictionary(
-            ConcreteFunctions.Concat(ConcreteDecimalFunctions).ToArray(),
-            GenericFunctions);
+        // Math fns dispatch via GenericFunctions (Floats constraint).
+        ConcreteDoubleFunctions = System.Array.Empty<IConcreteFunction>();
+        ConcreteDecimalFunctions = System.Array.Empty<IConcreteFunction>();
+        var allDoubleConcretes = ConcreteFunctions.Concat(ConcreteDoubleFunctions).ToArray();
+        var allDecimalConcretes = ConcreteFunctions.Concat(ConcreteDecimalFunctions).ToArray();
+        // Float-family dialect (Real=double + Float32): base set + toFloat32/toFloat64.
+        var floatFamilyGenerics = GenericFunctions.Concat(ToNumericFunctions.CreateFloatFamilyExtras()).ToArray();
+        SingleDoubleFunctions = new SingleDictFunctionRegistry(allDoubleConcretes, GenericFunctions);
+        SingleDecimalFunctions = new SingleDictFunctionRegistry(allDecimalConcretes, GenericFunctions);
+        SingleFloatFamilyFunctions = new SingleDictFunctionRegistry(allDoubleConcretes, floatFamilyGenerics);
+        DualDoubleFunctions = new DualDictFunctionRegistry(allDoubleConcretes, GenericFunctions);
+        DualDecimalFunctions = new DualDictFunctionRegistry(allDecimalConcretes, GenericFunctions);
+        DualFloatFamilyFunctions = new DualDictFunctionRegistry(allDoubleConcretes, floatFamilyGenerics);
     }
 }

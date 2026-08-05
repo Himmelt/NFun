@@ -1,6 +1,6 @@
 namespace NFun.Types; 
 
-internal class ArrayTypeSpecification {
+public class ArrayTypeSpecification {
     public readonly FunnyType FunnyType;
 
     public ArrayTypeSpecification(FunnyType funnyType) => FunnyType = funnyType;
@@ -11,7 +11,7 @@ internal class ArrayTypeSpecification {
     {
         if (obj == null) return false;
         if (ReferenceEquals(this, obj)) return true;
-        if (obj.GetType() != this.GetType()) return false;
+        if (obj.GetType() != GetType()) return false;
         return Equals((ArrayTypeSpecification)obj);
     }
 

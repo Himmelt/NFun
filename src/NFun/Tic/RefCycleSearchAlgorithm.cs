@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NFun.Tic.SolvingStates;
 
-namespace NFun.Tic; 
+namespace NFun.Tic;
 
 class RefCycleSearchAlgorithm {
     private readonly int _nodeInListMark;
@@ -15,14 +15,14 @@ class RefCycleSearchAlgorithm {
         if (node.VisitMark == RefVisitedMark)
             return null;
 
-        _refRoute = new Stack<TicNode>();
+        _refRoute = null; // lazy — only allocated if cycle found
         var nonReference = GetNonReferenceNodeOrNull(node);
         if (nonReference != null)
             return nonReference;
 
         // ref cycle found!
         // the node becomes one non reference node with no constrains
-        node.State = new ConstrainsState();
+        node.State = ConstraintsState.Empty;
         foreach (var refNode in _refRoute)
         {
             if (refNode == node)
@@ -53,12 +53,12 @@ class RefCycleSearchAlgorithm {
         node.VisitMark = RefVisitingMark;
         var res = GetNonReferenceNodeOrNull(refTo.Node);
         if (res == null)
-            _refRoute.Push(node);
+            (_refRoute ??= new Stack<TicNode>()).Push(node);
         else
         {
             node.VisitMark = -1;
             //merge
-            if (node.Ancestors.Any())
+            if (node.Ancestors.Count > 0)
             {
                 res.AddAncestors(node.Ancestors);
                 node.ClearAncestors();

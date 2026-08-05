@@ -15,7 +15,7 @@ public class MultiSumFunction : GenericFunctionBase {
     public MultiSumFunction() : base(
         Id, GenericConstrains.Arithmetical, FunnyType.Generic(0),
         FunnyType.ArrayOf(FunnyType.Generic(0)))
-    { }
+    { ArgProperties = FunArgProperty.FromNames("arr"); }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypes, IFunctionSelectorContext context) =>
         concreteTypes[0].BaseType switch
@@ -26,10 +26,16 @@ public class MultiSumFunction : GenericFunctionBase {
             BaseFunnyType.Int16  => context.AllowIntegerOverflow? Int16Function.Instance: Int16CheckedFunction.Instance,
             BaseFunnyType.Int32  => context.AllowIntegerOverflow? Int32Function.Instance: Int32CheckedFunction.Instance,
             BaseFunnyType.Int64  => context.AllowIntegerOverflow? Int64Function.Instance: Int64CheckedFunction.Instance,
+            BaseFunnyType.Float32 => Float32Function.Instance,
             BaseFunnyType.Real   => context.RealTypeSelect<IConcreteFunction>(RealDoubleFunction.Instance, RealDecimalFunction.Instance),
-            _                    => throw new ArgumentOutOfRangeException()
+            _                    => throw new NFunImpossibleException("Unsupported type for this function")
         };
 
+    private class Float32Function : FunctionWithSingleArg {
+        public static readonly Float32Function Instance = new();
+        private Float32Function() : base(Id, FunnyType.Float32, FunnyType.ArrayOf(FunnyType.Float32)){ }
+        public override object Calc(object a) => ((IFunnyArray) a).As<float>().Sum();
+    }
 
     private class RealDoubleFunction : FunctionWithSingleArg {
         public static readonly RealDoubleFunction Instance = new();
@@ -219,7 +225,7 @@ public class RangeFunction : GenericFunctionBase {
         CoreFunNames.RangeName,
         GenericConstrains.Numbers,
         FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Generic(0), FunnyType.Generic(0))
-    { }
+    { ArgProperties = FunArgProperty.FromNames("from", "to"); }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypes, IFunctionSelectorContext context) =>
         concreteTypes[0].BaseType switch
@@ -228,16 +234,33 @@ public class RangeFunction : GenericFunctionBase {
             BaseFunnyType.UInt16 => UInt16Function.Instance,
             BaseFunnyType.UInt32 => UInt32Function.Instance,
             BaseFunnyType.UInt64 => UInt64Function.Instance,
+            BaseFunnyType.Int8   => Int8Function.Instance,
             BaseFunnyType.Int16  => Int16Function.Instance,
             BaseFunnyType.Int32  => Int32Function.Instance,
             BaseFunnyType.Int64  => Int64Function.Instance,
+            BaseFunnyType.Float32 => Float32Function.Instance,
             BaseFunnyType.Real => context.RealTypeSelect<IConcreteFunction>(
-                RealDoubleFunction.Instance, 
+                RealDoubleFunction.Instance,
                 RealDecimalFunction.Instance),
             _ => throw new NotSupportedException()
         };
 
     private const string Id = "range";
+
+    class Float32Function : FunctionWithTwoArgs {
+        public static readonly Float32Function Instance = new();
+        private Float32Function() : base(Id, FunnyType.ArrayOf(FunnyType.Float32), FunnyType.Float32, FunnyType.Float32) { }
+        public override object Calc(object a, object b) {
+            var start = (float)a;
+            var end = (float)b;
+            // Half-open enumeration matching int Range semantics: from..to inclusive,
+            // step = ±1.0f, ascending if from < to else descending.
+            var list = new List<float>();
+            if (start <= end) for (float v = start; v <= end; v += 1f) list.Add(v);
+            else for (float v = start; v >= end; v -= 1f) list.Add(v);
+            return new ImmutableFunnyArray(list.ToArray(), FunnyType.Float32);
+        }
+    }
 
     class Int16Function : FunctionWithTwoArgs {
         public static readonly Int16Function Instance = new();
@@ -252,15 +275,21 @@ public class RangeFunction : GenericFunctionBase {
             short[] result;
             if (start < end)
             {
-                result = new short[end - start + 1];
-                for (var i = start; i <= end; i += 1)
-                    result[i - start] = i;
+                // Count-based loop avoids post-increment past MaxValue. When end is the
+                // type's MaxValue, `i += 1` after the final iteration overflows to MinValue,
+                // condition `i <= end` becomes true, and the array gets indexed at a
+                // huge negative offset → "Index out of bounds". (MR5Bug1.)
+                int len = end - start + 1;
+                result = new short[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = (short)(start + c);
             }
             else
             {
-                result = new short[start - end + 1];
-                for (var i = start; i >= end; i -= 1)
-                    result[start-i] = i;
+                int len = start - end + 1;
+                result = new short[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = (short)(start - c);
             }
             return new ImmutableFunnyArray(result, FunnyType.Int16);
         }
@@ -279,15 +308,18 @@ public class RangeFunction : GenericFunctionBase {
             int[] result;
             if (start < end)
             {
-                result = new int[end - start + 1];
-                for (var i = start; i <= end; i += 1)
-                    result[i - start] = i;
+                // See Int16Function for the MaxValue overflow rationale.
+                int len = end - start + 1;
+                result = new int[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = start + c;
             }
             else
             {
-                result = new int[start - end + 1];
-                for (var i = start; i >= end; i -= 1)
-                    result[start-i] = i;
+                int len = start - end + 1;
+                result = new int[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = start - c;
             }
             return new ImmutableFunnyArray(result);
         }
@@ -306,15 +338,18 @@ public class RangeFunction : GenericFunctionBase {
             long[] result;
             if (start < end)
             {
-                result = new long[end - start + 1];
-                for (var i = start; i <= end; i += 1)
-                    result[i - start] = i;
+                // See Int16Function for the MaxValue overflow rationale.
+                long len = end - start + 1;
+                result = new long[len];
+                for (long c = 0; c < len; c++)
+                    result[c] = start + c;
             }
             else
             {
-                result = new long[start - end + 1];
-                for (var i = start; i >= end; i -= 1)
-                    result[start-i] = i;
+                long len = start - end + 1;
+                result = new long[len];
+                for (long c = 0; c < len; c++)
+                    result[c] = start - c;
             }
             return new ImmutableFunnyArray(result);
         }
@@ -330,24 +365,53 @@ public class RangeFunction : GenericFunctionBase {
         {
             var start = (byte) a;
             var end = (byte) b;
-            
+
             byte[] result;
             if (start < end)
             {
-                result = new byte[end - start + 1];
-                for (var i = start; i <= end; i += 1)
-                    result[i - start] = i;
+                // See Int16Function for the MaxValue overflow rationale.
+                int len = end - start + 1;
+                result = new byte[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = (byte)(start + c);
             }
             else
             {
-                result = new byte[start - end + 1];
-                for (var i = start; i >= end; i -= 1)
-                {
-                    result[start-i] = i;
-                    if(i==0) break;
-                }
+                int len = start - end + 1;
+                result = new byte[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = (byte)(start - c);
             }
             return new ImmutableFunnyArray(result);
+        }
+    }
+
+    class Int8Function : FunctionWithTwoArgs {
+        public static readonly Int8Function Instance = new();
+
+        private Int8Function() : base(Id, FunnyType.ArrayOf(FunnyType.Int8), FunnyType.Int8, FunnyType.Int8)
+        { }
+
+        public override object Calc(object a, object b)
+        {
+            var start = (sbyte) a;
+            var end = (sbyte) b;
+            sbyte[] result;
+            if (start < end)
+            {
+                int len = end - start + 1;
+                result = new sbyte[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = (sbyte)(start + c);
+            }
+            else
+            {
+                int len = start - end + 1;
+                result = new sbyte[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = (sbyte)(start - c);
+            }
+            return new ImmutableFunnyArray(result, FunnyType.Int8);
         }
     }
 
@@ -364,18 +428,18 @@ public class RangeFunction : GenericFunctionBase {
             ushort[] result;
             if (start < end)
             {
-                result = new ushort[end - start + 1];
-                for (var i = start; i <= end; i += 1)
-                    result[i - start] = i;
+                // See Int16Function for the MaxValue overflow rationale.
+                int len = end - start + 1;
+                result = new ushort[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = (ushort)(start + c);
             }
             else
             {
-                result = new ushort[start - end + 1];
-                for (var i = start; i >= end; i -= 1)
-                {
-                    result[start-i] = i;
-                    if(i==0) break;
-                }
+                int len = start - end + 1;
+                result = new ushort[len];
+                for (int c = 0; c < len; c++)
+                    result[c] = (ushort)(start - c);
             }
             return new ImmutableFunnyArray(result);
         }
@@ -394,18 +458,18 @@ public class RangeFunction : GenericFunctionBase {
             uint[] result;
             if (start < end)
             {
-                result = new uint[end - start + 1];
-                for (var i = start; i <= end; i += 1)
-                    result[i - start] = i;
+                // See Int16Function for the MaxValue overflow rationale.
+                uint len = end - start + 1;
+                result = new uint[len];
+                for (uint c = 0; c < len; c++)
+                    result[c] = start + c;
             }
             else
             {
-                result = new uint[start - end + 1];
-                for (var i = start; i >= end; i -= 1)
-                {
-                    result[start-i] = i;
-                    if(i==0) break;
-                }
+                uint len = start - end + 1;
+                result = new uint[len];
+                for (uint c = 0; c < len; c++)
+                    result[c] = start - c;
             }
             return new ImmutableFunnyArray(result);
         }
@@ -424,18 +488,18 @@ public class RangeFunction : GenericFunctionBase {
             ulong[] result;
             if (start < end)
             {
-                result = new ulong[end - start + 1];
-                for (var i = start; i <= end; i += 1)
-                    result[i - start] = i;
+                // See Int16Function for the MaxValue overflow rationale.
+                ulong len = end - start + 1;
+                result = new ulong[len];
+                for (ulong c = 0; c < len; c++)
+                    result[c] = start + c;
             }
             else
             {
-                result = new ulong[start - end + 1];
-                for (var i = start; i >= end; i -= 1)
-                {
-                    result[start-i] = i;
-                    if(i==0) break;
-                }
+                ulong len = start - end + 1;
+                result = new ulong[len];
+                for (ulong c = 0; c < len; c++)
+                    result[c] = start - c;
             }
             return new ImmutableFunnyArray(result);
         }
@@ -519,7 +583,7 @@ public class RangeStepFunction : GenericFunctionBase {
         CoreFunNames.RangeName,
         GenericConstrains.Numbers,
         FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Generic(0), FunnyType.Generic(0), FunnyType.Generic(0))
-    { }
+    { ArgProperties = FunArgProperty.FromNames("from", "to", "step"); }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypes, IFunctionSelectorContext context) =>
         concreteTypes[0].BaseType switch
@@ -528,14 +592,32 @@ public class RangeStepFunction : GenericFunctionBase {
             BaseFunnyType.UInt16 => UInt16Function.Instance,
             BaseFunnyType.UInt32 => UInt32Function.Instance,
             BaseFunnyType.UInt64 => UInt64Function.Instance,
+            BaseFunnyType.Int8   => Int8Function.Instance,
             BaseFunnyType.Int16  => Int16Function.Instance,
             BaseFunnyType.Int32  => Int32Function.Instance,
             BaseFunnyType.Int64  => Int64Function.Instance,
+            BaseFunnyType.Float32 => Float32Function.Instance,
             BaseFunnyType.Real   =>context.RealTypeSelect<IConcreteFunction>(RealDoubleFunction.Instance,RealDecimalFunction.Instance),
-            _                    => throw new ArgumentOutOfRangeException()
+            _                    => throw new NFunImpossibleException("Unsupported type for this function")
         };
 
     private const string Id = "rangeWithStep";
+
+    class Float32Function : FunctionWithManyArguments {
+        public static readonly Float32Function Instance = new();
+        private Float32Function() : base(
+            Id, FunnyType.ArrayOf(FunnyType.Float32), FunnyType.Float32, FunnyType.Float32, FunnyType.Float32) { }
+        public override object Calc(object[] args) {
+            var start = (float)args[0];
+            var end = (float)args[1];
+            var step = (float)args[2];
+            if (step <= 0f) throw new FunnyRuntimeException("Step has to be positive");
+            var list = new List<float>();
+            if (start <= end) for (float v = start; v <= end; v += step) list.Add(v);
+            else for (float v = start; v >= end; v -= step) list.Add(v);
+            return new ImmutableFunnyArray(list.ToArray(), FunnyType.Float32);
+        }
+    }
 
     class Int16Function : FunctionWithManyArguments {
         public static readonly Int16Function Instance = new();
@@ -642,6 +724,33 @@ public class RangeStepFunction : GenericFunctionBase {
                 for (var i = start; i >= end; i -= step)
                     result.Add(i);
             return new ImmutableFunnyArray(result.ToArray());
+        }
+    }
+
+    class Int8Function : FunctionWithManyArguments {
+        public static readonly Int8Function Instance = new();
+
+        private Int8Function() : base(
+            Id, FunnyType.ArrayOf(FunnyType.Int8), FunnyType.Int8, FunnyType.Int8,
+            FunnyType.Int8)
+        { }
+
+        public override object Calc(object[] args)
+        {
+            var start = (sbyte) args[0];
+            var end = (sbyte) args[1];
+            var step = (sbyte) args[2];
+            if (step <= 0)
+                throw new FunnyRuntimeException("Step has to be positive");
+
+            var result = new List<sbyte>();
+            if (start < end)
+                for (var i = start; i <= end; i = (sbyte)(i + step))
+                    result.Add(i);
+            else
+                for (var i = start; i >= end; i = (sbyte)(i - step))
+                    result.Add(i);
+            return new ImmutableFunnyArray(result.ToArray(), FunnyType.Int8);
         }
     }
 

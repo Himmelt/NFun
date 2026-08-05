@@ -97,10 +97,9 @@ public class CompareOperatorsTest {
     [TestCase("'avatar'<= 'avatar' ", true)]
     [TestCase("'avatar'>= 'avatar' ", true)]
     [TestCase("'avatar'>  'avatar' ", false)]
-    //todo
-    //[TestCase("'avatar'.reverse() >  reverse('avatar') ", false)]
-    //[TestCase("('avatar'.reverse()) >  reverse('avatar') ", false)]
-    //[TestCase("'avatar'.reverse() <  'avatar'", false)]
+    [TestCase("'avatar'.reverse() >  reverse('avatar') ", false)]
+    [TestCase("('avatar'.reverse()) >  reverse('avatar') ", false)]
+    [TestCase("'avatar'.reverse() <  'avatar'", false)]
     [TestCase("0==0.0", true)]
     [TestCase("0!=0.5", true)]
     [TestCase("-1.0>=-0x1", true)]
@@ -243,6 +242,149 @@ public class CompareOperatorsTest {
     [TestCase("x:byte; y = x==42", (byte)1, false)]
     [TestCase("x:byte; y = x==42", (byte)42, true)]
     [TestCase("x:byte; y = x==42", (byte)43, false)]
+    [TestCase("x:int8; y = x>42",  (sbyte)1,  false)]
+    [TestCase("x:int8; y = x>42",  (sbyte)42, false)]
+    [TestCase("x:int8; y = x>42",  (sbyte)43, true)]
+    [TestCase("x:int8; y = x>=42", (sbyte)1,  false)]
+    [TestCase("x:int8; y = x>=42", (sbyte)42, true)]
+    [TestCase("x:int8; y = x>=42", (sbyte)43, true)]
+    [TestCase("x:int8; y = x<42",  (sbyte)1,  true)]
+    [TestCase("x:int8; y = x<42",  (sbyte)42, false)]
+    [TestCase("x:int8; y = x<42",  (sbyte)43, false)]
+    [TestCase("x:int8; y = x<=42", (sbyte)1,  true)]
+    [TestCase("x:int8; y = x<=42", (sbyte)42, true)]
+    [TestCase("x:int8; y = x<=42", (sbyte)43, false)]
+    [TestCase("x:int8; y = x==42", (sbyte)1,  false)]
+    [TestCase("x:int8; y = x==42", (sbyte)42, true)]
+    [TestCase("x:int8; y = x==42", (sbyte)43, false)]
     public void SingleVariableEquation(string expr, object arg, object expected) =>
         expr.Calc("x", arg).AssertReturns("y", expected);
+
+    // ───────────────────────────────────────────────────────────────
+    // Float32 comparison ops — opt-in dialect, work via IComparable
+    // (System.Single implements IComparable).
+    // ───────────────────────────────────────────────────────────────
+    [TestCase("x:float32; y = x>1.5",  1.0f, false)]
+    [TestCase("x:float32; y = x>1.5",  2.0f, true)]
+    [TestCase("x:float32; y = x>=1.5", 1.5f, true)]
+    [TestCase("x:float32; y = x>=1.5", 1.0f, false)]
+    [TestCase("x:float32; y = x<1.5",  1.0f, true)]
+    [TestCase("x:float32; y = x<1.5",  2.0f, false)]
+    [TestCase("x:float32; y = x<=0.0", 0.0f, true)]
+    [TestCase("x:float32; y = x==1.5", 1.5f, true)]
+    [TestCase("x:float32; y = x==1.5", 2.0f, false)]
+    [TestCase("x:float32; y = x!=1.5", 1.5f, false)]
+    [TestCase("x:float32; y = x!=1.5", 2.0f, true)]
+    public void Float32_SingleVariableEquation(string expr, float arg, bool expected) =>
+        expr.CalcWithFloats(("x", arg)).AssertReturns("y", expected);
+
+    // ═══════════════════════════════════════════════════════════════
+    // Struct equality with structural subtyping
+    // ═══════════════════════════════════════════════════════════════
+
+    [Test]
+    public void StructEquality_SameFields_Equal() =>
+        "{x=1} == {x=1}".AssertReturns(true);
+
+    [Test]
+    public void StructEquality_DifferentFieldCount_NotEqual() =>
+        // Per spec: structs must have same field list for equality
+        "{x=1, y=2} == {x=1}".AssertReturns(false);
+
+    [Test]
+    public void StructEquality_SharedFieldDiffers_NotEqual() =>
+        "{x=1, y=2} == {x=1, y=3}".AssertReturns(false);
+
+    [Test]
+    public void StructNotEqual_DifferentFieldCount_True() =>
+        "{x=1} != {x=1, y=2}".AssertReturns(true);
+
+    [Test]
+    public void StructInArray_DifferentFieldCount_NotFound() =>
+        // {x=1} not in [{x=1,y=2}] — different field counts
+        "out = {x=1} in [{x=1, y=2}]".AssertReturns("out", false);
+
+    [Test]
+    public void StructSubsetEqual_ShouldBeFalse() =>
+        "out = {a = 1} == {a = 1, b = 2}".AssertReturns("out", false);
+
+    [Test]
+    public void StructSupersetEqual_ShouldBeFalse() =>
+        "out = {a = 1, b = 2} == {a = 1}".AssertReturns("out", false);
+
+    [Test]
+    public void StructSubsetNotEqual_ShouldBeTrue() =>
+        "out = {a = 1} != {a = 1, b = 2}".AssertReturns("out", true);
+
+    [Test]
+    public void StructDisjointFields_NotEqual() =>
+        "out = {a = 1, b = 2} == {a = 1, c = 3}".AssertReturns("out", false);
+
+    [Test]
+    public void StructSameFields_Equal() =>
+        "out = {a = 1, b = 2} == {a = 1, b = 2}".AssertReturns("out", true);
+
+    [Test]
+    public void StructSameFieldsDiffValues_NotEqual() =>
+        "out = {a = 1, b = 2} == {a = 1, b = 3}".AssertReturns("out", false);
+
+    [Test]
+    public void StructThreeVsTwoFields() =>
+        "out = {a = 1, b = 2, c = 3} == {a = 1, b = 2}".AssertReturns("out", false);
+
+    [Test]
+    public void StructEqualityDifferentFields_NoCrash() {
+        Assert.DoesNotThrow(() =>
+            "a = {x=1, y=2}; b = {x=1, z=3}; out = a == b".Calc());
+    }
+
+    [Test]
+    public void StructEqualityDifferentFieldCount() {
+        "a = {x=1, y=2}; b = {x=1}; out = a == b".Calc().AssertResultHas("out", false);
+    }
+
+    [Test]
+    public void StructIntersect_Works() {
+        var r = "a=[{x=1},{x=2}]; b=[{x=2},{x=3}]; out=a.intersect(b)".Calc();
+        var arr = (object[])r.Get("out");
+        Assert.AreEqual(1, arr.Length, "intersect should find {x=2} in both arrays");
+    }
+
+    // `==` no longer applies implicit ToText coercion of one operand to fit the
+    // other. Char vs Char[] (and any cross-family pair) returns false directly.
+    // Previously inside `rule it == 'a'` TIC narrowed equality's T to Char[]
+    // and ToText'd `it` (Char) into a 1-char text — silently producing true.
+    [TestCase("out = [/'a'].any(rule it == 'a')", false)]
+    [TestCase("out = [/'a'].any(rule it == [/'a'])", false)]
+    [TestCase("out = 'hello'.filter(rule it == 'l')", "")]
+    public void RuleIt_CharVsText_NoImplicitToText(string expr, object expected) =>
+        expr.AssertResultHas("out", expected);
+
+    // Binary min/max reject bool and ip at parse time — matching the array
+    // variant `[T].max()` and the relational operators `< > <= >=`. Per
+    // Specs/Operators.md L115-118 Comparables are text/char/numeric. Without
+    // this guard, max(true,false) silently returned a value (Bool happens to
+    // implement IComparable in .NET) and max(ip,ip) crashed with a raw
+    // InvalidCastException since IPAddress is not IComparable.
+    [TestCase("out = max(true, false)")]
+    [TestCase("out = min(true, false)")]
+    [TestCase("out = max(127.0.0.1, 192.168.0.1)")]
+    [TestCase("out = min(127.0.0.1, 192.168.0.1)")]
+    public void MinMax_NonComparable_RejectedAtParse(string expr) =>
+        Assert.Throws<NFun.Exceptions.FunnyParseException>(() => expr.Calc());
+
+    // SPS ↔ full-TIC error parity for the Comparable constraint (TicSimplePath.md §8.1).
+    // The primitive-only fast path (SimplePrimitiveSolver) used to treat the comparable
+    // flag as inert: `out = max(true, false)` resolved T=Bool in SPS and was caught only
+    // by the FU777 library backstop, while the same call next to a composite binding
+    // (which forces full TIC) failed at solve time with FU783. SPS now abstains when a
+    // comparable group resolves to a non-comparable type — both paths yield the same error.
+    [TestCase("out = max(true, false)")]                // SPS-eligible shape
+    [TestCase("z = [1]; out = max(true, false)")]       // composite forces full TIC
+    [TestCase("out = min(true, false)")]
+    [TestCase("z = [1]; out = min(true, false)")]
+    public void MinMax_NonComparable_SameErrorOnBothSolverPaths(string expr) {
+        var ex = Assert.Throws<NFun.Exceptions.FunnyParseException>(() => expr.Calc());
+        Assert.AreEqual(783, ex.ErrorCode, $"expected the full-TIC FU783, got FU{ex.ErrorCode}");
+    }
 }

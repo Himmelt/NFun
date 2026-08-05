@@ -29,9 +29,37 @@ public static class TestHelper {
         return new CalculationResult(vals, runtime.Converter);
     }
 
+    public static CalculationResult CalcWithDialect(
+        this string expr,
+        IfExpressionSetup ifExpressionSyntax = IfExpressionSetup.IfIfElse,
+        IntegerPreferredType integerPreferredType = IntegerPreferredType.I32,
+        RealClrType realClrType = RealClrType.IsDouble,
+        IntegerOverflow integerOverflow = IntegerOverflow.Checked,
+        AllowUserFunctions allowUserFunctions = AllowUserFunctions.AllowAll,
+        OptionalTypesSupport optionalTypesSupport = OptionalTypesSupport.Disabled,
+        AllowNewlineInStrings allowNewlineInStrings = AllowNewlineInStrings.Allow,
+        NamedTypesSupport namedTypesSupport = NamedTypesSupport.Disabled,
+        ExtensionFunctionsSeparation extensionFunctionsSeparation = ExtensionFunctionsSeparation.Disabled,
+        params (string id, object clrValue)[] values) =>
+        Funny.Hardcore.WithDialect(
+            ifExpressionSyntax,
+            integerPreferredType,
+            realClrType,
+            integerOverflow,
+            allowUserFunctions,
+            optionalTypesSupport,
+            allowNewlineInStrings,
+            namedTypesSupport,
+            extensionFunctionsSeparation: extensionFunctionsSeparation).Build(expr).Calc(values);
 
     public static CalculationResult Calc(this string expr, params (string id, object val)[] values) =>
         Funny.Hardcore.Build(expr).Calc(values);
+
+    public static CalculationResult CalcWithNamedTypes(this string expr, params (string id, object val)[] values) =>
+        Funny.Hardcore.WithDialect(namedTypesSupport: NamedTypesSupport.Enabled).Build(expr).Calc(values);
+
+    public static FunnyRuntime BuildWithNamedTypes(this string expr) =>
+        Funny.Hardcore.WithDialect(namedTypesSupport: NamedTypesSupport.Enabled).Build(expr);
 
     public static object CalcAnonymousOut(this string expr, params (string id, object val)[] values) =>
         Calc(expr, values).Get(Parser.AnonymousEquationId);
@@ -41,11 +69,36 @@ public static class TestHelper {
         IntegerPreferredType integerPreferredType = IntegerPreferredType.I32,
         RealClrType realClrType = RealClrType.IsDouble,
         IntegerOverflow integerOverflow = IntegerOverflow.Checked,
-        AllowUserFunctions allowUserFunctions = AllowUserFunctions.AllowAll)
-        => Funny.Hardcore.WithDialect(ifExpressionSyntax, integerPreferredType, realClrType, integerOverflow,
-            allowUserFunctions).Build(expr);
+        AllowUserFunctions allowUserFunctions = AllowUserFunctions.AllowAll,
+        OptionalTypesSupport optionalTypesSupport = OptionalTypesSupport.Disabled,
+        AllowNewlineInStrings allowNewlineInStrings = AllowNewlineInStrings.Allow)
+        => Funny.Hardcore.WithDialect(
+            ifExpressionSyntax,
+            integerPreferredType,
+            realClrType,
+            integerOverflow,
+            allowUserFunctions,
+            optionalTypesSupport,
+            allowNewlineInStrings).Build(expr);
 
     public static FunnyRuntime Build(this string expr) => Funny.Hardcore.Build(expr);
+
+    // Float-family helpers: float32/float64 keywords require explicit dialect opt-in
+    // (FloatFamilySupport.AccordingToRealBehaviour is default to keep backward compat).
+    public static FunnyRuntime BuildWithFloats(this string expr) =>
+        Funny.Hardcore.WithDialect(floatFamilySupport: FloatFamilySupport.Float32AndFloat64).Build(expr);
+
+    public static CalculationResult CalcWithFloats(this string expr, params (string id, object val)[] values) =>
+        BuildWithFloats(expr).Calc(values);
+
+    // Combined FloatFamily + Optional (needed for float32? tests).
+    public static FunnyRuntime BuildWithFloatsAndOptional(this string expr) =>
+        Funny.Hardcore.WithDialect(
+            floatFamilySupport: FloatFamilySupport.Float32AndFloat64,
+            optionalTypesSupport: OptionalTypesSupport.Enabled).Build(expr);
+
+    public static CalculationResult CalcWithFloatsAndOptional(this string expr, params (string id, object val)[] values) =>
+        BuildWithFloatsAndOptional(expr).Calc(values);
 
 
     public static string ToStringSmart(this object v) =>
@@ -71,7 +124,9 @@ public static class TestHelper {
             case string astr:
                 return astr.Equals((string)b);
             case double resultD:
-                return Math.Abs(resultD - (double)b) < 0.01;
+                var expectedD = (double)b;
+                if (double.IsNaN(resultD) && double.IsNaN(expectedD)) return true;
+                return Math.Abs(resultD - expectedD) < 0.01;
             case decimal resultDec:
                 return resultDec.Equals((decimal)b);
             case IPAddress ipAddress:

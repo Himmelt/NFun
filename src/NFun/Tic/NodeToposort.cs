@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using NFun.Exceptions;
 using NFun.Tic.Errors;
 using NFun.Tic.SolvingStates;
@@ -25,17 +24,22 @@ public class NodeToposort {
 
     private int _visitDepth = 0;
 
-    public void OptimizeTopology() {
-        //Trying to find ancestor cycles
+    /// <summary>
+    /// Topological sort + optional per-node callback (streaming Pull fusion).
+    /// If onNodeReady is provided, it is called for each non-reference node
+    /// immediately after post-processing, in toposort order.
+    /// </summary>
+    public void OptimizeTopology(Action<TicNode> onNodeReady = null) {
+        // Cycle handling relies on Stages.Invoke's visited-pair guard; no pre-pass marking is
+        // needed here. The in-Visit cycle initiator detection below still sets
+        // IsContractiveCycleHead for the paths that consume it.
 
         _path = new Stack<TicNode>(_allNodes.Count);
 
         foreach (var nonReferenceNode in _allNodes)
-        {
             Visit(nonReferenceNode);
-        }
 
-        //at this moment we have garanties that graph has no cycles
+        // Post-process: dereference ancestors, transfer RefTo edges, build result array.
         NonReferenceOrdered = new TicNode[_path.Count - _referenceNodesCount];
         var nonRefId = 0;
         foreach (var node in _path)
@@ -50,7 +54,15 @@ public class NodeToposort {
             if (node.State is StateRefTo refTo)
             {
                 foreach (var refAncestor in node.Ancestors)
+                {
+                    // Skip self-edges that would arise when transferring
+                    // ancestors of a RefTo'd node where one ancestor IS the
+                    // refTo target. Happens when SetCall(F-bounded fun)
+                    // produces a return node with State=RefTo(fun.RetNode)
+                    // AND fun.RetNode is in the ancestor chain (cycle).
+                    if (refAncestor == refTo.Node) continue;
                     refTo.Node.AddAncestor(refAncestor);
+                }
                 node.ClearAncestors();
             }
             else
@@ -60,6 +72,9 @@ public class NodeToposort {
 
                 if (node.State is ICompositeState composite)
                     node.State = composite.GetNonReferenced();
+
+                // Streaming: process node immediately in toposort order
+                onNodeReady?.Invoke(node);
             }
         }
     }
@@ -104,57 +119,72 @@ public class NodeToposort {
         if (_visitDepth > 1000)
             throw new InvalidOperationException($"Toposort stack overflow. Node: {node}");
 
-
-        if (node == null)
-            return true;
-        if (node.VisitMark == IsVisited)
+        try
         {
-            // if node is already visited then skip it
-            return true;
-        }
+            if (node == null)
+                return true;
+            if (node.VisitMark == IsVisited)
+                return true;
 
-        if (node.VisitMark == InProcess)
-        {
-            // Node is visiting, that means cycle found
-            // initialize cycle collecting process
-            _cycle = new Stack<TicNode>(_path.Count + 1);
-            _cycleInitiator = node;
-            return false;
-        }
-
-        node.VisitMark = InProcess;
-
-        if (node.State is StateRefTo refTo)
-        {
-            _referenceNodesCount++;
-            if (!Visit(refTo.Node))
+            if (node.VisitMark == InProcess)
             {
-                // VisitNodeInCycle rolls back graph
-                // so we need to decrement counter
-                _referenceNodesCount--;
-                // this node is part of cycle
-                return VisitNodeInCycle(node);
+                // Node is visiting, that means cycle found
+                // initialize cycle collecting process
+                _cycle = new Stack<TicNode>(_path.Count + 1);
+                _cycleInitiator = node;
+                return false;
             }
+
+            node.VisitMark = InProcess;
+
+            if (node.State is StateRefTo refTo)
+            {
+                _referenceNodesCount++;
+                if (!Visit(refTo.Node))
+                {
+                    // VisitNodeInCycle rolls back graph
+                    // so we need to decrement counter
+                    _referenceNodesCount--;
+                    // this node is part of cycle
+                    return VisitNodeInCycle(node);
+                }
+            }
+            else if (node.State is ICompositeState composite)
+            {
+                for (int mi = 0; mi < composite.MemberCount; mi++)
+                    if (!Visit(composite.GetMember(mi)))
+                    {
+                        // A composite-member edge is contractive by construction (Cardelli-Mitchell
+                        // '89 §3). Mark cycle initiator and continue toposort.
+                        if (_cycleInitiator != null)
+                        {
+                            _cycleInitiator.IsContractiveCycleHead = true;
+                            _cycle = null;
+                            _cycleInitiator = null;
+                        }
+                        else
+                        {
+                            ThrowRecursiveTypeDefinition(node);
+                        }
+                    }
+            }
+
+            // ReSharper disable once ForCanBeConvertedToForeach
+            for (var i = 0; i < node.Ancestors.Count; i++)
+            {
+                var ancestor = node.Ancestors[i];
+                if (!Visit(ancestor))
+                    return VisitNodeInCycle(node);
+            }
+
+            _path.Push(node);
+            node.VisitMark = IsVisited;
+            return true;
         }
-        else if (node.State is ICompositeState composite)
+        finally
         {
-            foreach (var member in composite.Members)
-                if (!Visit(member))
-                    ThrowRecursiveTypeDefinition(node);
+            _visitDepth--;
         }
-
-        // ReSharper disable once ForCanBeConvertedToForeach
-        for (var i = 0; i < node.Ancestors.Count; i++)
-        {
-            var ancestor = node.Ancestors[i];
-            if (!Visit(ancestor))
-                return VisitNodeInCycle(node);
-        }
-
-
-        _path.Push(node);
-        node.VisitMark = IsVisited;
-        return true;
     }
 
     private void ThrowRecursiveTypeDefinition(TicNode node) {
@@ -177,7 +207,10 @@ public class NodeToposort {
 
         // (a<= b <= c = a)  =>  (a = b = c) 
 
-        var merged = SolvingFunctions.MergeGroup(_cycle.Reverse());
+        // Reverse cycle in-place (avoid LINQ Reverse() allocation)
+        var cycleArray = _cycle.ToArray();
+        Array.Reverse(cycleArray);
+        var merged = SolvingFunctions.MergeGroup(cycleArray);
 
         // Cycle is merged
         _cycle = null;

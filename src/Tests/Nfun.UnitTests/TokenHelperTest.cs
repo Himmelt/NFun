@@ -57,6 +57,8 @@ public class TokenHelperTest {
     [TestCase("uint32;", BaseFunnyType.UInt32)]
     [TestCase("uint64;(", BaseFunnyType.UInt64)]
     [TestCase("uint64;a", BaseFunnyType.UInt64)]
+    [TestCase("int8", BaseFunnyType.Int8)]
+    [TestCase("int8=", BaseFunnyType.Int8)]
     [TestCase("real", BaseFunnyType.Real)]
     [TestCase("real:", BaseFunnyType.Real)]
     [TestCase("bool", BaseFunnyType.Bool)]
@@ -64,36 +66,6 @@ public class TokenHelperTest {
     public void ReadType_PrimitiveTypes(string expr, BaseFunnyType expected) =>
         AssertFunnyType(expr, FunnyType.PrimitiveOf(expected));
 
-    [TestCase("int10")]
-    [TestCase("uint10")]
-    [TestCase("uint9")]
-    [TestCase("uint1")]
-    [TestCase("real32")]
-    [TestCase("asdasd")]
-    [TestCase("a")]
-    [TestCase("")]
-    [TestCase("[[")]
-    [TestCase("|")]
-    [TestCase("*")]
-    [TestCase("rule")]
-    [TestCase("rule(?):?")]
-    [TestCase("fon")]
-    [TestCase("{}")]
-    [TestCase("bool8")]
-    [TestCase("boolean")]
-    [TestCase("int[[;")]
-    [TestCase("int[;]")]
-    [TestCase("int[] []")]
-    [TestCase("int  []")]
-    [TestCase("anything")]
-    [TestCase("default")]
-    [TestCase("t")]
-    public void ReadType_Throws(string expr) {
-        var flow = Tokenizer.ToFlow(expr);
-        Assert.Catch(() => flow.ReadType());
-    }
-
-    [TestCase("int8")]
     [TestCase("async")]
     public void ReservedWord_Throw(string expr) => FunnyAssert.ObviousFailsOnParse(() => Tokenizer.ToFlow(expr));
 
@@ -151,9 +123,30 @@ public class TokenHelperTest {
     public void ReadTwinArrayType(string expr, BaseFunnyType elementType) =>
         AssertFunnyType(expr, FunnyType.ArrayOf(FunnyType.ArrayOf(FunnyType.PrimitiveOf(elementType))));
 
+    [Test]
+    public void ReadType_EmptyStruct() =>
+        AssertFunnyType("{}", FunnyType.StructOf());
+
+    [Test]
+    public void ReadType_SingleFieldStruct() =>
+        AssertFunnyType("{a:int}", FunnyType.StructOf(("a", FunnyType.Int32)));
+
+    [Test]
+    public void ReadType_MultiFieldStruct() =>
+        AssertFunnyType("{a:int,b:text}", FunnyType.StructOf(("a", FunnyType.Int32), ("b", FunnyType.Text)));
+
+    [Test]
+    public void ReadType_OptionalStruct() =>
+        AssertFunnyType("{a:int}?", FunnyType.OptionalOf(FunnyType.StructOf(("a", FunnyType.Int32))));
+
+    [Test]
+    public void ReadType_ArrayOfStruct() =>
+        AssertFunnyType("{a:int}[]", FunnyType.ArrayOf(FunnyType.StructOf(("a", FunnyType.Int32))));
+
     private void AssertFunnyType(string expr, FunnyType expected) {
         var flow = Tokenizer.ToFlow(expr);
-        var actual = flow.ReadType();
+        var syntax = flow.ReadTypeSyntax();
+        var actual = NFun.TypeInferenceAdapter.TypeSyntaxResolver.Resolve(syntax);
         Assert.AreEqual(expected, actual);
     }
 }

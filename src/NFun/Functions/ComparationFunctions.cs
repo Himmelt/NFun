@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Runtime.CompilerServices;
 using NFun.Interpretation.Functions;
 using NFun.Types;
 
@@ -10,6 +11,13 @@ public class NotEqualFunction : GenericFunctionWithTwoArguments {
         FunnyType.Generic(0)) { }
 
     protected override object Calc(object a, object b) => !TypeHelper.AreEqual(a, b);
+
+    // Override the runtime concrete to take `Any` on both sides, regardless of how TIC
+    // unifies T. Without this, TIC may narrow T to a type that triggers an implicit
+    // ToText (or similar identity-changing) coercion of one operand and produce a
+    // silent wrong answer — see EqualFunction below for the full reasoning (Bug CC).
+    public override IConcreteFunction CreateConcrete(FunnyType[] _, IFunctionSelectorContext context) =>
+        EqualFunction.AnyAnyConcrete(CoreFunNames.NotEqual, (a, b) => !TypeHelper.AreEqual(a, b));
 }
 
 public class EqualFunction : GenericFunctionWithTwoArguments {
@@ -17,6 +25,28 @@ public class EqualFunction : GenericFunctionWithTwoArguments {
 
     protected override object Calc(object a, object b)
         => TypeHelper.AreEqual(a, b);
+
+    // TIC infers `==` as `(T,T)->Bool` and unifies T across both operands. When the
+    // operands are in different families (e.g. Char vs Char[]) TIC narrows T to one
+    // side's type and CreateWithConvertionOrThrow inserts a cast — for `to.IsText`
+    // that cast is `ToText`, which wraps a Char in a 1-char text and makes the
+    // post-cast equality silently true. Equality has no business applying
+    // identity-changing coercions; ignore the inferred T and concretize as
+    // `(Any,Any)->Bool`. Numeric promotion (`1 == 1.0`) is handled inside
+    // TypeHelper.AreEqual via cross-type double comparison. Array equality is also
+    // structural in AreEquivalent. (Bug CC.)
+    public override IConcreteFunction CreateConcrete(FunnyType[] _, IFunctionSelectorContext context) =>
+        AnyAnyConcrete(CoreFunNames.Equal, TypeHelper.AreEqual);
+
+    internal static IConcreteFunction AnyAnyConcrete(string name, Func<object, object, bool> calc) =>
+        new AnyAnyEqualityFunction(name, calc);
+
+    private sealed class AnyAnyEqualityFunction : FunctionWithTwoArgs {
+        private readonly Func<object, object, bool> _calc;
+        public AnyAnyEqualityFunction(string name, Func<object, object, bool> calc)
+            : base(name, FunnyType.Bool, FunnyType.Any, FunnyType.Any) => _calc = calc;
+        public override object Calc(object a, object b) => _calc(a, b);
+    }
 }
 
 public class MoreFunction : GenericFunctionWithTwoArguments {
@@ -25,9 +55,9 @@ public class MoreFunction : GenericFunctionWithTwoArguments {
         FunnyType.Generic(0)) { }
 
     protected override object Calc(object a, object b) {
-        var left = (IComparable)a;
-        var right = (IComparable)b;
-        return left.CompareTo(right) > 0;
+        // IEEE 754: NaN is unordered — any comparison with NaN returns false
+        if (IEEE754Guard.EitherIsNaN(a, b)) return false;
+        return ((IComparable)a).CompareTo(b) > 0;
     }
 }
 
@@ -37,9 +67,9 @@ public class MoreOrEqualFunction : GenericFunctionWithTwoArguments {
         FunnyType.Generic(0), FunnyType.Generic(0)) { }
 
     protected override object Calc(object a, object b) {
-        var left = (IComparable)a;
-        var right = (IComparable)b;
-        return left.CompareTo(right) >= 0;
+        // IEEE 754: NaN is unordered — any comparison with NaN returns false
+        if (IEEE754Guard.EitherIsNaN(a, b)) return false;
+        return ((IComparable)a).CompareTo(b) >= 0;
     }
 }
 
@@ -49,9 +79,9 @@ public class LessFunction : GenericFunctionWithTwoArguments {
         FunnyType.Generic(0)) { }
 
     protected override object Calc(object a, object b) {
-        var left = (IComparable)a;
-        var right = (IComparable)b;
-        return left.CompareTo(right) < 0;
+        // IEEE 754: NaN is unordered — any comparison with NaN returns false
+        if (IEEE754Guard.EitherIsNaN(a, b)) return false;
+        return ((IComparable)a).CompareTo(b) < 0;
     }
 }
 
@@ -61,17 +91,32 @@ public class LessOrEqualFunction : GenericFunctionWithTwoArguments {
         FunnyType.Generic(0), FunnyType.Generic(0)) { }
 
     protected override object Calc(object a, object b) {
-        var left = (IComparable)a;
-        var right = (IComparable)b;
-        return left.CompareTo(right) <= 0;
+        // IEEE 754: NaN is unordered — any comparison with NaN returns false
+        if (IEEE754Guard.EitherIsNaN(a, b)) return false;
+        return ((IComparable)a).CompareTo(b) <= 0;
     }
 }
 
+/// <summary>
+/// IEEE 754: NaN is unordered. IComparable.CompareTo treats NaN as the smallest value,
+/// which violates IEEE 754. This helper detects double NaN operands.
+/// </summary>
+internal static class IEEE754Guard {
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static bool EitherIsNaN(object a, object b)
+        => IsNaN(a) || IsNaN(b);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static bool IsNaN(object o)
+        => (o is double d && double.IsNaN(d)) || (o is float f && float.IsNaN(f));
+}
+
 public class MinFunction : PureGenericFunctionBase {
-    public MinFunction() : base("min", GenericConstrains.Comparable, 2) { }
+    public MinFunction() : base("min", GenericConstrains.Comparable, 2) { ArgProperties = FunArgProperty.FromNames("a", "b"); }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypesMap, IFunctionSelectorContext context) {
         var generic = concreteTypesMap[0];
+        ComparablesGuard.RejectIfNotComparable("min", generic);
         FunctionWithTwoArgs function = new MinConcreteFunction();
         function.Setup(Name, generic);
         return function;
@@ -79,6 +124,9 @@ public class MinFunction : PureGenericFunctionBase {
 
     private class MinConcreteFunction : FunctionWithTwoArgs {
         public override object Calc(object a, object b) {
+            // IEEE 754: NaN propagates through min (works for double and float)
+            if (IEEE754Guard.EitherIsNaN(a, b))
+                return IEEE754Guard.IsNaN(a) ? a : b;
             var left = (IComparable)a;
             var right = (IComparable)b;
             return left.CompareTo(right) > 0 ? b : a;
@@ -87,10 +135,11 @@ public class MinFunction : PureGenericFunctionBase {
 }
 
 public class MaxFunction : PureGenericFunctionBase {
-    public MaxFunction() : base("max", GenericConstrains.Comparable, 2) { }
+    public MaxFunction() : base("max", GenericConstrains.Comparable, 2) { ArgProperties = FunArgProperty.FromNames("a", "b"); }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypesMap, IFunctionSelectorContext context) {
         var generic = concreteTypesMap[0];
+        ComparablesGuard.RejectIfNotComparable("max", generic);
         var function = new MaxConcreteFunction();
         function.Setup(Name, generic);
         return function;
@@ -98,10 +147,68 @@ public class MaxFunction : PureGenericFunctionBase {
 
     private class MaxConcreteFunction : FunctionWithTwoArgs {
         public override object Calc(object a, object b) {
+            // IEEE 754: NaN propagates through max (works for double and float)
+            if (IEEE754Guard.EitherIsNaN(a, b))
+                return IEEE754Guard.IsNaN(a) ? a : b;
             var arg1 = (IComparable)a;
             var arg2 = (IComparable)b;
             var result = arg1.CompareTo(arg2) > 0 ? a : b;
             return result;
         }
+    }
+}
+
+public class SignFunction : GenericFunctionBase {
+    public SignFunction() : base("sign", GenericConstrains.SignedNumber, FunnyType.Int32, FunnyType.Generic(0))
+        { ArgProperties = FunArgProperty.FromNames("x"); }
+
+    public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypes, IFunctionSelectorContext context) {
+        FunctionWithSingleArg result = concreteTypes[0].BaseType switch {
+            BaseFunnyType.Int8 => new Int8Impl(),
+            BaseFunnyType.Int16 => new Int16Impl(),
+            BaseFunnyType.Int32 => new Int32Impl(),
+            BaseFunnyType.Int64 => new Int64Impl(),
+            BaseFunnyType.Float32 => new Float32Impl(),
+            BaseFunnyType.Real => context.RealTypeSelect<FunctionWithSingleArg>(new DoubleImpl(), new DecimalImpl()),
+            _ => throw new Exceptions.NFunImpossibleException($"sign: unsupported type {concreteTypes[0]}")
+        };
+        result.Name = "sign";
+        result.ArgTypes = concreteTypes;
+        result.ReturnType = FunnyType.Int32;
+        return result;
+    }
+
+    private sealed class Int8Impl    : FunctionWithSingleArg { public override object Calc(object a) => Math.Sign((sbyte)a); }
+    private sealed class Int16Impl   : FunctionWithSingleArg { public override object Calc(object a) => Math.Sign((short)a); }
+    private sealed class Int32Impl   : FunctionWithSingleArg { public override object Calc(object a) => Math.Sign((int)a); }
+    private sealed class Int64Impl   : FunctionWithSingleArg { public override object Calc(object a) => Math.Sign((long)a); }
+    private sealed class Float32Impl : FunctionWithSingleArg { public override object Calc(object a) => Math.Sign((float)a); }
+    private sealed class DoubleImpl  : FunctionWithSingleArg { public override object Calc(object a) => Math.Sign((double)a); }
+    private sealed class DecimalImpl : FunctionWithSingleArg { public override object Calc(object a) => Math.Sign((decimal)a); }
+}
+
+/// <summary>
+/// Defensive guard for binary `min(T,T)` / `max(T,T)` (Bugs KK + LL). The TIC
+/// `Comparable` generic constraint admits types that the array variant
+/// `[T].max()` and the relational operators `< > <= >=` correctly reject —
+/// notably Bool and Ip. Without this guard, `max(true, false)` returns a value
+/// (Bool happens to implement IComparable in .NET) and `max(ip, ip)` crashes
+/// with a raw InvalidCastException (System.Net.IPAddress is not IComparable).
+/// Per Specs/Operators.md L115-118 the Comparable set is text / char / numbers.
+/// </summary>
+internal static class ComparablesGuard {
+    public static void RejectIfNotComparable(string functionName, FunnyType t) {
+        // Targeted rejection: bool and ip — the two known non-Comparable concrete
+        // primitives. Any is left through because it's the "unconstrained" TIC
+        // result for generic user-function forwards (`g(a,b) = max(a,b)` resolves
+        // T to Any when a/b are unconstrained); the runtime values can still be
+        // numeric/text/char. Other non-Comparable types (struct, fun, etc.) never
+        // reach this constraint via the binary `(T,T)→T` Comparable signature.
+        if (t.BaseType == BaseFunnyType.Bool || t.BaseType == BaseFunnyType.Ip)
+            throw new NFun.Exceptions.FunnyParseException(
+                777,
+                $"Function '{functionName}' requires Comparable operands " +
+                $"(text, char, or numeric); got '{t}'.",
+                new NFun.Tokenization.Interval(0, 0));
     }
 }

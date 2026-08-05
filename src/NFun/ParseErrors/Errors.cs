@@ -93,8 +93,9 @@ internal static partial class Errors {
                 TokType.Colon => ":",
                 TokType.MetaInfo => "@",
                 TokType.TwoDots => "..",
-                TokType.Step => "step",
+                // TokType.Step removed — "step" is now a contextual keyword (parsed as Id)
                 TokType.TextType => "text",
+                TokType.Int8Type => "int8",
                 TokType.Int16Type => "int16",
                 TokType.Int32Type => "int32",
                 TokType.Int64Type => "int64",
@@ -103,6 +104,8 @@ internal static partial class Errors {
                 TokType.UInt32Type => "uint32",
                 TokType.UInt64Type => "uint64",
                 TokType.RealType => "real",
+                TokType.Float32Type => "float32",
+                TokType.Float64Type => "float64",
                 TokType.BoolType => "bool",
                 TokType.CharType => "char",
                 TokType.AnythingType => "any",
@@ -196,7 +199,7 @@ internal static partial class Errors {
 
 
         var errorStart = lastArgPosition;
-        if (flow.CurrentTokenStartPosition == errorStart)
+        if (flow.CurrentTokenFinishPosition == errorStart)
             errorStart = arguments.Last().Interval.Start;
         //[x, {y someshit} , ...
         if (!hasAnyBeforeStop)

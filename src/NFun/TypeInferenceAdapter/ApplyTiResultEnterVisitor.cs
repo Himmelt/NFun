@@ -1,6 +1,7 @@
 using NFun.SyntaxParsing;
 using NFun.SyntaxParsing.SyntaxNodes;
 using NFun.SyntaxParsing.Visitors;
+using NFun.Tic.SolvingStates;
 
 namespace NFun.TypeInferenceAdapter;
 
@@ -20,7 +21,7 @@ public class ApplyTiResultEnterVisitor : EnterVisitorBase {
     }
 
     public override DfsEnterResult Visit(NamedIdSyntaxNode node) {
-        //TODO it is just workaround. We have to manually setup variable type into VariableSource
+        // VariableType = TIC's named-node type (may differ from OutputType for narrowed variables)
         var type = _solving.GetVariableTypeOrNull(node.Id);
         if (type != null)
             node.VariableType = _tiToLangTypeConverter.Convert(type);
@@ -36,6 +37,25 @@ public class ApplyTiResultEnterVisitor : EnterVisitorBase {
         return DfsEnterResult.Continue;
     }
 
+
+    public override DfsEnterResult Visit(FunCallSyntaxNode node) {
+        var result = DefaultVisitEnter(node);
+
+        var resolvedArgs = _solving.GetResolvedCallArgsOrNull(node.OrderNumber);
+        if (resolvedArgs != null)
+        {
+            foreach (var arg in resolvedArgs)
+            {
+                // Synthetic nodes (params arrays) are not in the tree — apply type manually
+                if (arg.OrderNumber >= TicSetupVisitor.SyntheticIdStart)
+                {
+                    var type = _solving.GetSyntaxNodeTypeOrNull(arg.OrderNumber);
+                    arg.OutputType = type == null ? FunnyType.Empty : _tiToLangTypeConverter.Convert(type);
+                }
+            }
+        }
+        return result;
+    }
 
     public override DfsEnterResult Visit(UserFunctionDefinitionSyntaxNode node)
         => DfsEnterResult.Continue;

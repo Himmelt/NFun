@@ -9,10 +9,12 @@ using NFun.Types;
 namespace NFun.Functions;
 
 public class LastFunction : GenericFunctionBase {
-    public LastFunction() : base(
-        "last",
-        FunnyType.Generic(0),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public LastFunction() : base(new FunctionSignatureDescription(
+        name: "last",
+        outputType: FunnyType.Generic(0),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object[] args) {
         var arr = (IFunnyArray)args[0];
@@ -22,10 +24,12 @@ public class LastFunction : GenericFunctionBase {
 }
 
 public class FirstFunction : GenericFunctionBase {
-    public FirstFunction() : base(
-        "first",
-        FunnyType.Generic(0),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public FirstFunction() : base(new FunctionSignatureDescription(
+        name: "first",
+        outputType: FunnyType.Generic(0),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object[] args) {
         var arr = (IFunnyArray)args[0];
@@ -35,21 +39,24 @@ public class FirstFunction : GenericFunctionBase {
 }
 
 public class CountFunction : GenericFunctionWithSingleArgument {
-    public CountFunction() : base(
-        "count",
-        FunnyType.Int32,
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public CountFunction() : base(new FunctionSignatureDescription(
+        name: "count",
+        outputType: FunnyType.Int32,
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object a)
         => ((IFunnyArray)a).Count;
 }
 
 public class MapFunction : GenericFunctionBase {
-    public MapFunction() : base(
-        "map",
-        FunnyType.ArrayOf(FunnyType.Generic(1)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Generic(1), FunnyType.Generic(0))) { }
+    public MapFunction() : base(new FunctionSignatureDescription(
+        name: "map",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(1)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Generic(1), FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr", "f" })) { }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypesMap, IFunctionSelectorContext context) {
         var res = new ConcreteMap {
@@ -68,11 +75,11 @@ public class MapFunction : GenericFunctionBase {
             var arr = (IFunnyArray)a;
             var type = ReturnType.ArrayTypeSpecification.FunnyType;
             if (b is FunctionWithSingleArg mapFunc)
-                return new EnumerableFunnyArray(arr.Select(e => mapFunc.Calc(e)), type);
+                return FunnyArrayTools.CreateEnumerable(arr.Select(e => mapFunc.Calc(e)), type);
 
             var map = (IConcreteFunction)b;
 
-            return new EnumerableFunnyArray(arr.Select(e => map.Calc(new[] { e })), type);
+            return FunnyArrayTools.CreateEnumerable(arr.Select(e => map.Calc(new[] { e })), type);
         }
     }
 }
@@ -80,12 +87,13 @@ public class MapFunction : GenericFunctionBase {
 public class MultiMapSumFunction : GenericFunctionBase {
     private const string Id = "sum";
 
-    public MultiMapSumFunction() : base(
-        Id,
-        new[] { GenericConstrains.Any, GenericConstrains.Arithmetical },
-        returnType: FunnyType.Generic(1),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Generic(1), FunnyType.Generic(0))) { }
+    public MultiMapSumFunction() : base(new FunctionSignatureDescription(
+        name: Id,
+        outputType: FunnyType.Generic(1),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Generic(1), FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Any, GenericConstrains.Arithmetical },
+        argNames: new[] { "arr", "f" })) { }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypes, IFunctionSelectorContext context) {
         var concrete = concreteTypes[1].BaseType switch {
@@ -93,10 +101,11 @@ public class MultiMapSumFunction : GenericFunctionBase {
                            BaseFunnyType.UInt64 => new ConcreteMapSumBase((a, b) => (UInt64)a + (UInt64)b, (UInt64)0),
                            BaseFunnyType.Int32  => new ConcreteMapSumBase((a, b) => (Int32)a + (Int32)b, 0),
                            BaseFunnyType.Int64  => new ConcreteMapSumBase((a, b) => (Int64)a + (Int64)b, (Int64)0),
+                           BaseFunnyType.Float32 => new ConcreteMapSumBase((a, b) => (float)a + (float)b, (float)0),
                            BaseFunnyType.Real => context.RealTypeSelect(
                                ifIsDouble: new ConcreteMapSumBase((a, b) => (double)a + (double)b, (double)0),
                                ifIsDecimal: new ConcreteMapSumBase((a, b) => (decimal)a + (decimal)b, (decimal)0)),
-                           _ => throw new ArgumentOutOfRangeException()
+                           _ => throw new NFunImpossibleException("Unsupported type for this function")
                        };
         concrete.Name = Id;
         concrete.ArgTypes = SubstitudeArgTypes(concreteTypes);
@@ -135,11 +144,12 @@ public class MultiMapSumFunction : GenericFunctionBase {
 }
 
 public class IsInSingleGenericFunctionDefinition : GenericFunctionBase {
-    public IsInSingleGenericFunctionDefinition() : base(
-        CoreFunNames.In,
-        FunnyType.Bool,
-        FunnyType.Generic(0),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public IsInSingleGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: CoreFunNames.In,
+        outputType: FunnyType.Bool,
+        inputTypes: new[] { FunnyType.Generic(0), FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "element", "arr" })) { }
 
     protected override object Calc(object[] args) {
         var val = args[0];
@@ -149,13 +159,12 @@ public class IsInSingleGenericFunctionDefinition : GenericFunctionBase {
 }
 
 public class SliceWithStepGenericFunctionDefinition : GenericFunctionBase {
-    public SliceWithStepGenericFunctionDefinition() : base(
-        CoreFunNames.SliceName,
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Int32,
-        FunnyType.Int32,
-        FunnyType.Int32) { }
+    public SliceWithStepGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: CoreFunNames.SliceName,
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Int32, FunnyType.Int32, FunnyType.Int32 },
+        isExtension: true,
+        argNames: new[] { "arr", "from", "to", "step" })) { }
 
     protected override object Calc(object[] args) {
         var start = (int)args[1];
@@ -164,36 +173,42 @@ public class SliceWithStepGenericFunctionDefinition : GenericFunctionBase {
         var end = (int)args[2];
         if (end < 0)
             throw new FunnyRuntimeException("Argument out of range");
-        if (end != 0 && start > end)
+        if (start > end)
             throw new FunnyRuntimeException("Start cannot be more than end");
         var step = (int)args[3];
-        if (step < 0)
+        if (step <= 0)
             throw new FunnyRuntimeException("Argument out of range");
-        if (step == 0)
-            step = 1;
         var arr = (IFunnyArray)args[0];
         return arr.Slice(start, end, step);
     }
 }
 
 public class SortFunction : GenericFunctionBase {
-    public SortFunction() : base(
-        "sort", GenericConstrains.Comparable,
-        FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public SortFunction() : base(new FunctionSignatureDescription(
+        name: "sort",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Comparable },
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object[] args) {
         var funArray = (IFunnyArray)args[0];
 
         var arr = funArray.As<IComparable>().ToArray(funArray.Count);
         Array.Sort(arr);
-        return new ImmutableFunnyArray(arr, funArray.ElementType);
+        return FunnyArrayTools.CreateArray(arr, funArray.ElementType);
     }
 }
 
 public class SortDescendingFunction : GenericFunctionBase {
-    public SortDescendingFunction() : base(
-        "sortDescending", GenericConstrains.Comparable,
-        FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public SortDescendingFunction() : base(new FunctionSignatureDescription(
+        name: "sortDescending",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Comparable },
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object[] args) {
         var funArray = (IFunnyArray)args[0];
@@ -201,44 +216,52 @@ public class SortDescendingFunction : GenericFunctionBase {
         var arr = funArray.As<IComparable>().ToArray(funArray.Count);
         Array.Sort(arr);
         Array.Reverse(arr);
-        return new ImmutableFunnyArray(arr, funArray.ElementType);
+        return FunnyArrayTools.CreateArray(arr, funArray.ElementType);
     }
 }
 
 public class SortMapFunction : GenericFunctionBase {
-    public SortMapFunction() : base(
-        "sort", new[] { GenericConstrains.Any, GenericConstrains.Comparable },
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Generic(1), FunnyType.Generic(0))) { }
+    public SortMapFunction() : base(new FunctionSignatureDescription(
+        name: "sort",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Generic(1), FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Any, GenericConstrains.Comparable },
+        argNames: new[] { "arr", "selector" })) { }
 
     protected override object Calc(object[] args) {
         var array = (IFunnyArray)args[0];
         var map = (IConcreteFunction)args[1];
         var sorted = array.OrderBy(a => (IComparable)map.Calc(new[] { a })).ToArray(array.Count);
-        return new ImmutableFunnyArray(sorted, array.ElementType);
+        return FunnyArrayTools.CreateArray(sorted, array.ElementType);
     }
 }
 
 public class SortMapDescendingFunction : GenericFunctionBase {
-    public SortMapDescendingFunction() : base(
-        "sortDescending", new[] { GenericConstrains.Any, GenericConstrains.Comparable },
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Generic(1), FunnyType.Generic(0))) { }
+    public SortMapDescendingFunction() : base(new FunctionSignatureDescription(
+        name: "sortDescending",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Generic(1), FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Any, GenericConstrains.Comparable },
+        argNames: new[] { "arr", "selector" })) { }
 
     protected override object Calc(object[] args) {
         var array = (IFunnyArray)args[0];
         var map = (IConcreteFunction)args[1];
         var sorted = array.OrderByDescending(a => (IComparable)map.Calc(new[] { a })).ToArray(array.Count);
-        return new ImmutableFunnyArray(sorted, array.ElementType);
+        return FunnyArrayTools.CreateArray(sorted, array.ElementType);
     }
 }
 
 public class MedianFunction : GenericFunctionBase {
-    public MedianFunction() : base(
-        "median", GenericConstrains.Comparable, FunnyType.Generic(0),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public MedianFunction() : base(new FunctionSignatureDescription(
+        name: "median",
+        outputType: FunnyType.Generic(0),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Comparable },
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object[] args)
     {
@@ -253,40 +276,67 @@ public class MedianFunction : GenericFunctionBase {
 
         int count = temp.Length;
         if (count == 0)
-            throw new InvalidOperationException("Empty collection");
+            throw new FunnyRuntimeException("Array is empty");
         return temp[(count - 1) / 2];
     }
 }
 
 public class MaxElementFunction : GenericFunctionBase {
-    public MaxElementFunction() : base(
-        "max", GenericConstrains.Comparable, FunnyType.Generic(0),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public MaxElementFunction() : base(new FunctionSignatureDescription(
+        name: "max",
+        outputType: FunnyType.Generic(0),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Comparable },
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object[] args) {
         var array = (IFunnyArray)args[0];
-        return array.As<IComparable>().Max();
+        if (array.Count == 0) throw new FunnyRuntimeException("Array is empty");
+        // IEEE 754: NaN propagates through max — return NaN on first NaN element (double or float).
+        // Without early-return, IComparable's ordering of NaN (as smallest) silently discards it.
+        object result = null;
+        foreach (var item in array)
+        {
+            if (IEEE754Guard.IsNaN(item)) return item;
+            if (result == null || ((IComparable)item).CompareTo(result) > 0)
+                result = item;
+        }
+        return result;
     }
 }
 
 public class MinElementFunction : GenericFunctionBase {
-    public MinElementFunction() : base(
-        "min", GenericConstrains.Comparable, FunnyType.Generic(0),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public MinElementFunction() : base(new FunctionSignatureDescription(
+        name: "min",
+        outputType: FunnyType.Generic(0),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Comparable },
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object[] args) {
         var array = (IFunnyArray)args[0];
-        return array.As<IComparable>().Min();
+        if (array.Count == 0) throw new FunnyRuntimeException("Array is empty");
+        // IEEE 754: NaN propagates through min. Same reasoning as MaxElementFunction.
+        object result = null;
+        foreach (var item in array)
+        {
+            if (IEEE754Guard.IsNaN(item)) return item;
+            if (result == null || ((IComparable)item).CompareTo(result) < 0)
+                result = item;
+        }
+        return result;
     }
 }
 
 public class SliceGenericFunctionDefinition : GenericFunctionBase {
-    public SliceGenericFunctionDefinition() : base(
-        CoreFunNames.SliceName,
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Int32,
-        FunnyType.Int32) { }
+    public SliceGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: CoreFunNames.SliceName,
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Int32, FunnyType.Int32 },
+        isExtension: true,
+        argNames: new[] { "arr", "from", "to" })) { }
 
     protected override object Calc(object[] args) {
         var start = (int)args[1];
@@ -297,7 +347,7 @@ public class SliceGenericFunctionDefinition : GenericFunctionBase {
         if (end < 0)
             throw new FunnyRuntimeException("Argument out of range");
 
-        if (end != 0 && start > end)
+        if (start > end)
             throw new FunnyRuntimeException("Start cannot be more than end");
 
         var arr = (IFunnyArray)args[0];
@@ -306,11 +356,11 @@ public class SliceGenericFunctionDefinition : GenericFunctionBase {
 }
 
 public class GetGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public GetGenericFunctionDefinition() : base(
-        CoreFunNames.GetElementName,
-        FunnyType.Generic(0),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Int32) { }
+    public GetGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: CoreFunNames.GetElementName,
+        outputType: FunnyType.Generic(0),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Int32 },
+        isExtension: true)) { }
 
     protected override object Calc(object a, object b) {
         var index = (int)b;
@@ -327,12 +377,12 @@ public class GetGenericFunctionDefinition : GenericFunctionWithTwoArguments {
 }
 
 public class SetGenericFunctionDefinition : GenericFunctionBase {
-    public SetGenericFunctionDefinition() : base(
-        "set",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Int32,
-        FunnyType.Generic(0)) { }
+    public SetGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "set",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Int32, FunnyType.Generic(0) },
+        isExtension: true,
+        argNames: new[] { "arr", "index", "value" })) { }
 
     protected override object Calc(object[] args) {
         var arr = (IFunnyArray)args[0];
@@ -347,16 +397,17 @@ public class SetGenericFunctionDefinition : GenericFunctionBase {
         var newArr = new object[arr.ClrArray.Length];
         arr.ClrArray.CopyTo(newArr, 0);
         newArr.SetValue(val, index);
-        return new ImmutableFunnyArray(newArr, arr.ElementType);
+        return FunnyArrayTools.CreateArray(newArr, arr.ElementType);
     }
 }
 
 public class FindGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public FindGenericFunctionDefinition() : base(
-        "find",
-        FunnyType.Int32,
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Generic(0)) { }
+    public FindGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "find",
+        outputType: FunnyType.Int32,
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Generic(0) },
+        isExtension: true,
+        argNames: new[] { "arr", "element" })) { }
 
     protected override object Calc(object a, object b) {
         var arr = (IFunnyArray)a;
@@ -374,11 +425,12 @@ public class FindGenericFunctionDefinition : GenericFunctionWithTwoArguments {
 }
 
 public class ChunkGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public ChunkGenericFunctionDefinition() : base(
-        "chunk",
-        FunnyType.ArrayOf(FunnyType.ArrayOf(FunnyType.Generic(0))),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Int32) { }
+    public ChunkGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "chunk",
+        outputType: FunnyType.ArrayOf(FunnyType.ArrayOf(FunnyType.Generic(0))),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Int32 },
+        isExtension: true,
+        argNames: new[] { "arr", "size" })) { }
 
     protected override object Calc(object a, object b) {
         var arr = (IFunnyArray)a;
@@ -404,25 +456,29 @@ public class ChunkGenericFunctionDefinition : GenericFunctionWithTwoArguments {
 }
 
 public class FlatGenericFunctionDefinition : GenericFunctionWithSingleArgument {
-    public FlatGenericFunctionDefinition() : base(
-        "flat",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.ArrayOf(FunnyType.Generic(0)))) { }
+    public FlatGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "flat",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.ArrayOf(FunnyType.Generic(0))) },
+        isExtension: true,
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object a) {
         var arr = (IFunnyArray)a;
         var originInputType = arr.ElementType.ArrayTypeSpecification.FunnyType;
 
-        return new EnumerableFunnyArray(arr.SelectMany(o => (IFunnyArray)o), originInputType);
+        return FunnyArrayTools.CreateEnumerable(arr.SelectMany(o => (IFunnyArray)o), originInputType);
     }
 }
 
 public class FoldGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public FoldGenericFunctionDefinition() : base(
-        "fold", new[] { GenericConstrains.Any },
-        FunnyType.Generic(0),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Generic(0), FunnyType.Generic(0), FunnyType.Generic(0))) { }
+    public FoldGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "fold",
+        outputType: FunnyType.Generic(0),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Generic(0), FunnyType.Generic(0), FunnyType.Generic(0)) },
+        isExtension: true,
+        constrains: new[] { GenericConstrains.Any },
+        argNames: new[] { "arr", "f" })) { }
 
     protected override object Calc(object a, object b) {
         var arr = (IFunnyArray)a;
@@ -438,13 +494,12 @@ public class FoldGenericFunctionDefinition : GenericFunctionWithTwoArguments {
 }
 
 public class FoldWithDefaultsGenericFunctionDefinition : GenericFunctionBase {
-    public FoldWithDefaultsGenericFunctionDefinition() : base(
-        "fold",
-        returnType: FunnyType.Generic(1),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Generic(1),
-        FunnyType.FunOf(
-            returnType: FunnyType.Generic(1), FunnyType.Generic(1), FunnyType.Generic(0))) { }
+    public FoldWithDefaultsGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "fold",
+        outputType: FunnyType.Generic(1),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Generic(1), FunnyType.FunOf( returnType: FunnyType.Generic(1), FunnyType.Generic(1), FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr", "seed", "f" })) { }
 
     protected override object Calc(object[] args) {
         var arr = (IFunnyArray)args[0];
@@ -460,97 +515,103 @@ public class FoldWithDefaultsGenericFunctionDefinition : GenericFunctionBase {
 }
 
 public class UniteGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public UniteGenericFunctionDefinition() : base(
-        "unite",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public UniteGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "unite",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "a", "b" })) { }
 
     protected override object Calc(object a, object b) {
         var arr1 = (IFunnyArray)a;
         var arr2 = (IFunnyArray)b;
-        return new EnumerableFunnyArray(arr1.Union(arr2), arr1.ElementType);
+        return FunnyArrayTools.CreateEnumerable(arr1.Union(arr2), arr1.ElementType);
     }
 }
 
 public class UniqueGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public UniqueGenericFunctionDefinition() : base(
-        "unique",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public UniqueGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "unique",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "a", "b" })) { }
 
     protected override object Calc(object a, object b) {
         var arr1 = (IFunnyArray)a;
         var arr2 = (IFunnyArray)b;
-        return new EnumerableFunnyArray(arr1.Except(arr2).Concat(arr2.Except(arr1)), arr1.ElementType);
+        return FunnyArrayTools.CreateEnumerable(arr1.Except(arr2).Concat(arr2.Except(arr1)), arr1.ElementType);
     }
 }
 
 public class IntersectGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public IntersectGenericFunctionDefinition() : base(
-        "intersect",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public IntersectGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "intersect",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "a", "b" })) { }
 
     protected override object Calc(object a, object b) {
         var arr1 = (IFunnyArray)a;
         var arr2 = (IFunnyArray)b;
-        return new EnumerableFunnyArray(arr1.Intersect(arr2), arr1.ElementType);
+        return FunnyArrayTools.CreateEnumerable(arr1.Intersect(arr2), arr1.ElementType);
     }
 }
 
 public class ConcatArraysGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public ConcatArraysGenericFunctionDefinition() : base(
-        "concat",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public ConcatArraysGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "concat",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "a", "b" })) { }
 
     protected override object Calc(object a, object b) {
         var arr1 = (IFunnyArray)a;
         var arr2 = (IFunnyArray)b;
-        var res = new EnumerableFunnyArray(arr1.Concat(arr2), arr1.ElementType);
-        return res;
+        return FunnyArrayTools.CreateEnumerable(arr1.Concat(arr2), arr1.ElementType);
     }
 }
 
 public class AppendGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public AppendGenericFunctionDefinition() : base(
-        "append",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Generic(0)) { }
+    public AppendGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "append",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Generic(0) },
+        isExtension: true,
+        argNames: new[] { "arr", "element" })) { }
 
     protected override object Calc(object a, object b) {
         var arr1 = (IFunnyArray)a;
         var arr2 = b;
-        var res = new EnumerableFunnyArray(arr1.Append(arr2), arr1.ElementType);
+        var res = FunnyArrayTools.CreateEnumerable(arr1.Append(arr2), arr1.ElementType);
         return res;
     }
 }
 
 public class SubstractArraysGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public SubstractArraysGenericFunctionDefinition() : base(
-        "except",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public SubstractArraysGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "except",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "a", "b" })) { }
 
     protected override object Calc(object a, object b) {
         var arr1 = (IFunnyArray)a;
         var arr2 = (IFunnyArray)b;
-        return new EnumerableFunnyArray(arr1.Except(arr2), arr1.ElementType);
+        return FunnyArrayTools.CreateEnumerable(arr1.Except(arr2), arr1.ElementType);
     }
 }
 
 public class CountOfGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public CountOfGenericFunctionDefinition() : base(
-        "count",
-        FunnyType.Int32,
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Bool, FunnyType.Generic(0))) { }
+    public CountOfGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "count",
+        outputType: FunnyType.Int32,
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Bool, FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr", "predicate" })) { }
 
     protected override object Calc(object a, object b) {
         var arr = (IFunnyArray)a;
@@ -561,21 +622,24 @@ public class CountOfGenericFunctionDefinition : GenericFunctionWithTwoArguments 
 }
 
 public class HasAnyGenericFunctionDefinition : GenericFunctionWithSingleArgument {
-    public HasAnyGenericFunctionDefinition() : base(
-        "any",
-        FunnyType.Bool,
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public HasAnyGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "any",
+        outputType: FunnyType.Bool,
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object a)
         => ((IFunnyArray)a).Count > 0;
 }
 
 public class AnyGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public AnyGenericFunctionDefinition() : base(
-        "any",
-        FunnyType.Bool,
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Bool, FunnyType.Generic(0))) { }
+    public AnyGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "any",
+        outputType: FunnyType.Bool,
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Bool, FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr", "predicate" })) { }
 
     protected override object Calc(object a, object b) {
         var arr = (IFunnyArray)a;
@@ -589,11 +653,12 @@ public class AnyGenericFunctionDefinition : GenericFunctionWithTwoArguments {
 }
 
 public class AllGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public AllGenericFunctionDefinition() : base(
-        "all",
-        FunnyType.Bool,
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Bool, FunnyType.Generic(0))) { }
+    public AllGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "all",
+        outputType: FunnyType.Bool,
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Bool, FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr", "predicate" })) { }
 
     protected override object Calc(object a, object b) {
         var arr = (IFunnyArray)a;
@@ -604,28 +669,30 @@ public class AllGenericFunctionDefinition : GenericFunctionWithTwoArguments {
 }
 
 public class FilterGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public FilterGenericFunctionDefinition() : base(
-        "filter",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.FunOf(FunnyType.Bool, FunnyType.Generic(0))) { }
+    public FilterGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "filter",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.FunOf(FunnyType.Bool, FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr", "predicate" })) { }
 
     protected override object Calc(object a, object b) {
         var arr = (IFunnyArray)a;
         if (b is FunctionWithSingleArg predicate)
-            return new EnumerableFunnyArray(arr.Where(e => (bool)predicate.Calc(e)), arr.ElementType);
+            return FunnyArrayTools.CreateEnumerable(arr.Where(e => (bool)predicate.Calc(e)), arr.ElementType);
         var filter = (IConcreteFunction)b;
 
-        return new EnumerableFunnyArray(arr.Where(e => (bool)filter.Calc(new[] { e })), arr.ElementType);
+        return FunnyArrayTools.CreateEnumerable(arr.Where(e => (bool)filter.Calc(new[] { e })), arr.ElementType);
     }
 }
 
 public class RepeatGenericFunctionDefinition : GenericFunctionBase {
-    public RepeatGenericFunctionDefinition() : base(
-        "repeat",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Generic(0),
-        FunnyType.Int32) { }
+    public RepeatGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "repeat",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.Generic(0), FunnyType.Int32 },
+        isExtension: true,
+        argNames: new[] { "element", "count" })) { }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypesMap, IFunctionSelectorContext context) {
         var res = new ConcreteRepeat {
@@ -637,41 +704,54 @@ public class RepeatGenericFunctionDefinition : GenericFunctionBase {
     }
 
     private class ConcreteRepeat : FunctionWithTwoArgs {
-        public override object Calc(object a, object b)
-            => new EnumerableFunnyArray(Enumerable.Repeat(a, (int)b), this.ArgTypes[0]);
+        public override object Calc(object a, object b) {
+            var count = (int)b;
+            if (count < 0) throw new FunnyRuntimeException("Repeat count cannot be negative");
+            return FunnyArrayTools.CreateEnumerable(Enumerable.Repeat(a, count), ArgTypes[0]);
+        }
     }
 }
 
 public class ReverseGenericFunctionDefinition : GenericFunctionWithSingleArgument {
-    public ReverseGenericFunctionDefinition() : base(
-        "reverse",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0))) { }
+    public ReverseGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "reverse",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)) },
+        isExtension: true,
+        argNames: new[] { "arr" })) { }
 
     protected override object Calc(object a) {
         var arr = (IFunnyArray)a;
-        return new EnumerableFunnyArray(arr.Reverse(), arr.ElementType);
+        return FunnyArrayTools.CreateEnumerable(arr.Reverse(), arr.ElementType);
     }
 }
 
 public class TakeGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public TakeGenericFunctionDefinition() : base(
-        "take",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Int32) { }
+    public TakeGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "take",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Int32 },
+        isExtension: true,
+        argNames: new[] { "arr", "count" })) { }
 
-    protected override object Calc(object a, object b)
-        => ((IFunnyArray)a).Slice(null, (int)b - 1, 1);
+    protected override object Calc(object a, object b) {
+        var count = (int)b;
+        if (count < 0) throw new FunnyRuntimeException("Take count cannot be negative");
+        return ((IFunnyArray)a).Slice(null, count - 1, 1);
+    }
 }
 
 public class SkipGenericFunctionDefinition : GenericFunctionWithTwoArguments {
-    public SkipGenericFunctionDefinition() : base(
-        "skip",
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.ArrayOf(FunnyType.Generic(0)),
-        FunnyType.Int32) { }
+    public SkipGenericFunctionDefinition() : base(new FunctionSignatureDescription(
+        name: "skip",
+        outputType: FunnyType.ArrayOf(FunnyType.Generic(0)),
+        inputTypes: new[] { FunnyType.ArrayOf(FunnyType.Generic(0)), FunnyType.Int32 },
+        isExtension: true,
+        argNames: new[] { "arr", "count" })) { }
 
-    protected override object Calc(object a, object b)
-        => ((IFunnyArray)a).Slice((int)b, null, 1);
+    protected override object Calc(object a, object b) {
+        var count = (int)b;
+        if (count < 0) throw new FunnyRuntimeException("Skip count cannot be negative");
+        return ((IFunnyArray)a).Slice(count, null, 1);
+    }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using NFun.ParseErrors;
@@ -34,6 +35,13 @@ public class Parser {
             _startOfTheLine = flow.IsStartOfTheLine();
             _exprStartPosition = flow.Current.Start;
 
+            // type keyword — parse named type declaration
+            if (flow.IsCurrent(TokType.TypeKeyword))
+            {
+                ReadTypeDeclaration(flow);
+                continue;
+            }
+
             var e = SyntaxNodeReader.ReadNodeOrNull(flow) ??
                     throw Errors.UnknownValueAtStartOfExpression(_exprStartPosition, flow.Current);
 
@@ -44,7 +52,7 @@ public class Parser {
                 else
                     ReadInputVariableSpecification(typed);
             }
-            else if (flow.IsCurrent(TokType.Def) || flow.IsCurrent(TokType.Colon))
+            else if (flow.IsCurrent(TokType.Def) || flow.IsCurrent(TokType.Colon) || flow.IsCurrent(TokType.Arrow))
             {
                 if (e is NamedIdSyntaxNode variable)
                     ReadEquation(variable, variable.Id);
@@ -104,26 +112,99 @@ public class Parser {
         if (fun.ParenthesesCount != 0)
             throw Errors.UnexpectedParenthesisOnFunDefinition(fun, _exprStartPosition, _flow.Previous.Finish);
 
-        var arguments = new List<TypedVarDefSyntaxNode>(fun.Args.Length);
+        var arguments = new List<TypedVarDefSyntaxNode>();
+        TypedVarDefSyntaxNode paramsArg = null;
+
+        var keywordOnlyFromPositional = new List<TypedVarDefSyntaxNode>();
+
+        // Positional args from fun.Args (required params + varargs)
         foreach (var headNodeChild in fun.Args)
         {
+            TypedVarDefSyntaxNode arg;
             if (headNodeChild is TypedVarDefSyntaxNode varDef)
-                arguments.Add(varDef);
+                arg = varDef;
             else if (headNodeChild is NamedIdSyntaxNode varSyntax)
-                arguments.Add(
-                    SyntaxNodeFactory.TypedVar(
-                        varSyntax.Id, headNodeChild.OutputType,
-                        headNodeChild.Interval.Start, headNodeChild.Interval.Finish));
+                arg = SyntaxNodeFactory.TypedVar(
+                    varSyntax.Id, TypeSyntax.Empty,
+                    headNodeChild.Interval.Start, headNodeChild.Interval.Finish);
             else
                 throw Errors.WrongFunctionArgumentDefinition(fun, headNodeChild);
 
             if (headNodeChild.ParenthesesCount != 0)
                 throw Errors.FunctionArgumentDefinitionIsInParenthesis(fun, headNodeChild);
+
+            // Defer params arg — it must be last, after defaults
+            if (arg.IsParams)
+            {
+                if (paramsArg != null)
+                    throw Errors.MultipleParams(fun);
+                paramsArg = arg;
+            }
+            else if (paramsArg != null)
+            {
+                // Arg after ... → keyword-only (must have default)
+                if (!arg.HasDefault)
+                    throw Errors.KeywordOnlyWithoutDefault(fun, arg.Id, arg.Interval);
+                keywordOnlyFromPositional.Add(new TypedVarDefSyntaxNode(
+                    arg.Id, arg.TypeSyntax, arg.Interval, arg.DefaultValue, isKeywordOnly: true));
+            }
+            else
+                arguments.Add(arg);
         }
 
-        var outputType = FunnyType.Empty;
-        if (_flow.MoveIf(TokType.Colon, out _))
-            outputType = _flow.ReadType();
+        // Named args BEFORE spread → regular defaults
+        var kwStart = fun.KeywordOnlyNamedStartIndex;
+        for (int i = 0; i < Math.Min(kwStart, fun.NamedArgs.Length); i++)
+        {
+            var named = fun.NamedArgs[i];
+            arguments.Add(new TypedVarDefSyntaxNode(
+                named.Name, TypeSyntax.Empty, named.NameInterval,
+                defaultValue: named.Value));
+        }
+
+        // Append params
+        if (paramsArg != null)
+            arguments.Add(paramsArg);
+
+        // Named args AFTER spread → keyword-only (must have defaults)
+        for (int i = kwStart; i < fun.NamedArgs.Length; i++)
+        {
+            var named = fun.NamedArgs[i];
+            if (named.Value == null)
+                throw Errors.KeywordOnlyWithoutDefault(fun, named.Name, named.NameInterval);
+            arguments.Add(new TypedVarDefSyntaxNode(
+                named.Name, TypeSyntax.Empty, named.NameInterval,
+                defaultValue: named.Value, isKeywordOnly: true));
+        }
+
+        // Typed keyword-only args from positional list (e.g., f(...items, sep:text='-'))
+        arguments.AddRange(keywordOnlyFromPositional);
+
+        // Validate: no required args after defaults (params/keyword-only excluded)
+        bool seenDefault = false;
+        for (int argIdx = 0; argIdx < arguments.Count; argIdx++)
+        {
+            var arg = arguments[argIdx];
+            if (arg.HasDefault)
+                seenDefault = true;
+            else if (arg.IsParams || arg.IsKeywordOnly)
+                break;
+            else if (seenDefault)
+                throw Errors.RequiredArgAfterDefault(fun, arg);
+        }
+
+        // Validate: no duplicate keyword-only names (only check keyword-only against all)
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (!arguments[i].IsKeywordOnly) continue;
+            for (int j = 0; j < i; j++)
+                if (string.Equals(arguments[i].Id, arguments[j].Id, StringComparison.OrdinalIgnoreCase))
+                    throw Errors.DuplicateKeywordOnlyArg(fun, arguments[i].Id, arguments[i].Interval);
+        }
+
+        var outputType = TypeSyntax.Empty;
+        if (_flow.MoveIf(TokType.Colon, out _) || _flow.MoveIf(TokType.Arrow, out _))
+            outputType = _flow.ReadTypeSyntax();
 
         _flow.SkipNewLines();
         if (!_flow.MoveIf(TokType.Def, out var def))
@@ -160,7 +241,6 @@ public class Parser {
         if (equationHeader is TypedVarDefSyntaxNode typed)
         {
             equation.TypeSpecificationOrNull = typed;
-            equation.OutputType = typed.FunnyType;
         }
 
         _nodes.Add(equation);
@@ -174,5 +254,99 @@ public class Parser {
         if (exNode == null)
             throw Errors.VarExpressionIsMissed(start, id, _flow.Current);
         return SyntaxNodeFactory.Equation(id, exNode, start, _attributes);
+    }
+
+    /// <summary>
+    /// Parse: type name = {field defs}
+    /// Fields can be: name:type, name:type = default_expr, name = default_expr
+    /// </summary>
+    private void ReadTypeDeclaration(TokFlow flow) {
+        var start = flow.Current.Start;
+        flow.MoveNext(); // skip 'type'
+
+        if (!flow.MoveIf(TokType.Id, out var nameToken))
+            throw Errors.TypeNameExpected(flow.Current);
+
+        if (!flow.MoveIf(TokType.Def, out _))
+            throw Errors.TypeDefTokenIsMissed(nameToken.Value, flow.Current);
+
+        // type name = {...}  → struct type
+        // type name = type   → type alias (int, int[], text?, other_name, etc.)
+        if (!flow.IsCurrent(TokType.FiObr))
+        {
+            // Type alias: read type syntax
+            var aliasType = flow.ReadTypeSyntax();
+            if (aliasType is TypeSyntax.EmptyType)
+                throw Errors.TypeBodyExpected(nameToken.Value, flow.Current);
+            var aliasInterval = new Interval(start, flow.CurrentTokenFinishPosition);
+            _nodes.Add(new TypeDeclarationSyntaxNode(nameToken.Value, aliasType, aliasInterval));
+            return;
+        }
+
+        flow.MoveNext(); // skip '{'
+
+        var fields = new List<TypeFieldDefinition>();
+        bool hasAnyDelimiter = true;
+        flow.SkipNewLines();
+
+        while (true)
+        {
+            if (flow.MoveIf(TokType.FiCbr))
+                break;
+
+            if (!hasAnyDelimiter)
+                throw Errors.StructFieldDelimiterIsMissed(new Interval(flow.CurrentTokenStartPosition - 1,
+                    flow.CurrentTokenFinishPosition));
+
+            if (!flow.MoveIfFieldName(out var fieldId))
+                throw Errors.StructFieldIdIsMissed(flow.Current);
+
+            var fieldStart = fieldId.Start;
+
+            // Try read type annotation
+            var typeSyntax = TypeSyntax.Empty;
+            if (flow.IsCurrent(TokType.Colon))
+            {
+                flow.MoveNext();
+                typeSyntax = flow.ReadTypeSyntax();
+                if (typeSyntax is TypeSyntax.EmptyType)
+                    throw Errors.TypeExpectedButWas(flow.Current);
+            }
+
+            // Try read default value
+            ISyntaxNode defaultValue = null;
+            if (flow.MoveIf(TokType.Def))
+            {
+                flow.SkipNewLines();
+                defaultValue = SyntaxNodeReader.ReadNodeOrNull(flow);
+                if (defaultValue == null)
+                    throw Errors.StructFieldBodyIsMissed(fieldId);
+            }
+
+            // All four formats are valid:
+            // {a}            — generic, required (no type, no default)
+            // {a:int}        — typed, required
+            // {a = 42}       — generic default (type inferred)
+            // {a:int = 42}   — typed with default
+
+            // Check for duplicate field names
+            if (fields.Any(f => string.Equals(f.Name, fieldId.Value, StringComparison.OrdinalIgnoreCase)))
+                throw Errors.NamedTypeDuplicateField(nameToken.Value, fieldId.Value, fieldId.Interval);
+
+            var fieldFinish = defaultValue?.Interval.Finish ?? flow.CurrentTokenFinishPosition;
+            fields.Add(new TypeFieldDefinition(
+                fieldId.Value, typeSyntax, defaultValue, new Interval(fieldStart, fieldFinish)));
+
+            hasAnyDelimiter = flow.Previous.Type == TokType.NewLine;
+            if (flow.MoveIf(TokType.Sep))
+                hasAnyDelimiter = true;
+            if (flow.SkipNewLines())
+                hasAnyDelimiter = true;
+            if (flow.IsDoneOrEof())
+                throw Errors.StructIsUndone(flow.CurrentTokenFinishPosition);
+        }
+
+        var interval = new Interval(start, flow.CurrentTokenFinishPosition);
+        _nodes.Add(new TypeDeclarationSyntaxNode(nameToken.Value, fields, interval));
     }
 }

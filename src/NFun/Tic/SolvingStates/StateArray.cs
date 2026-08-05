@@ -1,23 +1,24 @@
-﻿using System;
-using System.Collections.Generic;
+﻿namespace NFun.Tic.SolvingStates;
 
-namespace NFun.Tic.SolvingStates;
+using System;
+using System.Collections.Generic;
 
 public class StateArray : ICompositeState, ITypeState, ITicNodeState {
     public StateArray(TicNode elementNode) => ElementNode = elementNode;
 
     public static StateArray Of(ITicNodeState state) =>
         state switch {
-            ITypeState type  => Of(type),
+            ITypeState type => Of(type),
             StateRefTo refTo => Of(refTo.Node),
-            _                => throw new InvalidOperationException()
+            ConstraintsState c => Of(c),
+            _ =>  throw new InvalidOperationException($"Array cannot have state {state}")
         };
 
-    public static StateArray Of(TicNode node)
-        => new(node);
+    private static StateArray Of(ConstraintsState state) => new(TicNode.CreateInvisibleNode(state));
 
-    public static StateArray Of(ITypeState type)
-        => new(TicNode.CreateTypeVariableNode(type));
+    public static StateArray Of(TicNode node) => new(node);
+
+    public static StateArray Of(ITypeState type) => new(TicNode.CreateTypeVariableNode(type));
 
     public TicNode ElementNode { get; }
     public bool IsSolved => Element.IsSolved;
@@ -42,34 +43,44 @@ public class StateArray : ICompositeState, ITypeState, ITicNodeState {
         var ancestor = elementTypeA.GetLastCommonAncestorOrNull(elementTypeB);
         if (ancestor == null)
             return null;
-        return StateArray.Of(ancestor);
+        return Of(ancestor);
     }
 
-    public bool CanBeImplicitlyConvertedTo(StatePrimitive type)
-        => type.Equals(StatePrimitive.Any);
+    public string PrintState(int depth) {
+        if (depth > 100)
+            return "arr(...REQ...)";
+        return $"arr({Element.PrintState(depth + 1)})";
+    }
+
+    public bool CanBePessimisticConvertedTo(StatePrimitive type)
+        => type== StatePrimitive.Any;
+
+    private const int ArrayCycleGuard = -57500;
 
     public override bool Equals(object obj) {
-        if (obj is StateArray arr)
-            return arr.Element.Equals(this.Element);
-        return false;
+        if (obj is not StateArray arr) return false;
+        // Cycle guard for true graph cycles in named recursive types (e.g. forest = {kids: forest[]}).
+        // Amadio-Cardelli '93 §4.2 coinductive bisimulation: assume equal under recursive subgoal.
+        var elem = ElementNode;
+        if (elem.VisitMark == ArrayCycleGuard) return true;
+        var prev = elem.VisitMark;
+        elem.VisitMark = ArrayCycleGuard;
+        var result = arr.Element.Equals(Element);
+        elem.VisitMark = prev;
+        return result;
     }
 
     public ICompositeState GetNonReferenced()
-        => StateArray.Of(ElementNode.GetNonReference());
+        => Of(ElementNode.GetNonReference());
 
     public bool HasAnyReferenceMember => ElementNode.State is StateRefTo;
 
+    public int MemberCount => 1;
+    public TicNode GetMember(int index) => ElementNode;
     public IEnumerable<TicNode> Members => new[] { ElementNode };
 
-    public IEnumerable<TicNode> AllLeafTypes
-    {
-        get
-        {
-            if (ElementNode.State is ICompositeState composite)
-                return composite.AllLeafTypes;
-            return new[] { ElementNode };
-        }
-    }
+
+    public string StateDescription => PrintState(0);
 
     public string Description => "arr(" + ElementNode.Name + ")";
 }

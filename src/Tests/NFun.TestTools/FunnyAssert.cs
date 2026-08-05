@@ -119,6 +119,9 @@ public static class FunnyAssert {
         }
     }
 
+    public static void AssertResultIs(this CalculationResult result, string id, Type type)
+        => result.AssertResultIs(types :(id, type));
+
     public static void AssertResultIs(this CalculationResult result, Type type) {
         var res = result.Results.FirstOrDefault();
         Assert.IsNotNull(res, "no results found");
@@ -157,8 +160,9 @@ public static class FunnyAssert {
     public static void AssertOutputsCount(this FunnyRuntime runtime, int count) =>
         Assert.AreEqual(count, runtime.Variables.Count(v => v.IsOutput));
 
-    public static void AssertObviousFailsOnRuntime(this string expression) {
-        var runtime = expression.Build();
+    public static void AssertObviousFailsOnRuntime(this string expression,
+        OptionalTypesSupport optionalTypesSupport = OptionalTypesSupport.Disabled) {
+        var runtime = expression.BuildWithDialect(optionalTypesSupport: optionalTypesSupport);
         try
         {
             var res = runtime.Calc();
@@ -177,12 +181,16 @@ public static class FunnyAssert {
     public static void AssertObviousFailsOnParse(this string expression,
         IfExpressionSetup ifExpressionSyntax = IfExpressionSetup.IfIfElse,
         IntegerPreferredType integerPreferredType = IntegerPreferredType.I32,
-        RealClrType realClrType = RealClrType.IsDouble) {
+        RealClrType realClrType = RealClrType.IsDouble,
+        OptionalTypesSupport optionalTypesSupport = OptionalTypesSupport.Disabled,
+        AllowNewlineInStrings allowNewlineInStrings = AllowNewlineInStrings.Allow) {
         TraceLog.IsEnabled = true;
         try
         {
             var runtime = Funny.Hardcore
-                .WithDialect(ifExpressionSyntax, integerPreferredType, realClrType)
+                .WithDialect(ifExpressionSyntax, integerPreferredType, realClrType,
+                    optionalTypesSupport: optionalTypesSupport,
+                    allowNewlineInStrings: allowNewlineInStrings)
                 .Build(expression);
             if (runtime.Variables.Any(v => !v.IsOutput))
             {
@@ -243,4 +251,9 @@ public static class FunnyAssert {
     public static void AreSame(object expected, object actual) =>
         Assert.IsTrue(TestHelper.AreSame(expected, actual),
             $"Expected: {expected.ToStringSmart()} \r\nActual: {actual.ToStringSmart()}");
+
+    public static void AssertTrue(this bool value, string message = "") => Assert.IsTrue(value, message);
+
+    public static void AssertFalse(this bool value, string message = "") => Assert.IsFalse(value, message);
+
 }

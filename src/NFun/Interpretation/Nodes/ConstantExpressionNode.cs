@@ -10,9 +10,11 @@ internal class ConstantExpressionNode : IExpressionNode {
         primitive.BaseType switch {
             BaseFunnyType.Any    => new ConstantExpressionNode(value,   FunnyType.Any, interval),
             BaseFunnyType.Real   => new ConstantExpressionNode(typeBehaviour.GetRealConstantValue(value), FunnyType.Real, interval),
+            BaseFunnyType.Float32 => new ConstantExpressionNode((float)value, FunnyType.Float32, interval),
             BaseFunnyType.Int64  => new ConstantExpressionNode((long)value,   FunnyType.Int64, interval),
             BaseFunnyType.Int32  => new ConstantExpressionNode((int)value,    FunnyType.Int32, interval),
             BaseFunnyType.Int16  => new ConstantExpressionNode((short)value,  FunnyType.Int16, interval),
+            BaseFunnyType.Int8   => new ConstantExpressionNode((sbyte)value,  FunnyType.Int8, interval),
             BaseFunnyType.UInt64 => new ConstantExpressionNode((ulong)value,  FunnyType.UInt64, interval),
             BaseFunnyType.UInt32 => new ConstantExpressionNode((uint)value,   FunnyType.UInt32, interval),
             BaseFunnyType.UInt16 => new ConstantExpressionNode((ushort)value, FunnyType.UInt16, interval),
@@ -24,9 +26,11 @@ internal class ConstantExpressionNode : IExpressionNode {
         primitive.BaseType switch {
             BaseFunnyType.Any    => new ConstantExpressionNode(value,   FunnyType.Any, interval),
             BaseFunnyType.Real   => new ConstantExpressionNode(typeBehaviour.GetRealConstantValue(value), FunnyType.Real, interval),
+            BaseFunnyType.Float32 => new ConstantExpressionNode((float)value, FunnyType.Float32, interval),
             BaseFunnyType.Int64  => new ConstantExpressionNode((long)value,   FunnyType.Int64, interval),
             BaseFunnyType.Int32  => new ConstantExpressionNode((int)value,    FunnyType.Int32, interval),
             BaseFunnyType.Int16  => new ConstantExpressionNode((short)value,  FunnyType.Int16, interval),
+            BaseFunnyType.Int8   => new ConstantExpressionNode((sbyte)value,  FunnyType.Int8, interval),
             BaseFunnyType.UInt64 => new ConstantExpressionNode((ulong)value,  FunnyType.UInt64, interval),
             BaseFunnyType.UInt32 => new ConstantExpressionNode((uint)value,   FunnyType.UInt32, interval),
             BaseFunnyType.UInt16 => new ConstantExpressionNode((ushort)value, FunnyType.UInt16, interval),

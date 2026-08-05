@@ -3,14 +3,14 @@ using NFun.Tic.SolvingStates;
 namespace NFun.Tic.Stages;
 
 public class PushConstraintsFunctions : IStateFunction {
-    public static IStateFunction Singleton { get; } = new PushConstraintsFunctions();
+    public static PushConstraintsFunctions Singleton { get; } = new();
 
     public bool Apply(StatePrimitive ancestor, StatePrimitive descendant, TicNode ancestorNode, TicNode descendantNode)
-        => descendant.CanBeImplicitlyConvertedTo(ancestor);
+        => descendant.CanBePessimisticConvertedTo(ancestor);
 
-    public bool Apply(StatePrimitive ancestor, ConstrainsState descendant, TicNode ancestorNode, TicNode descendantNode) {
+    public bool Apply(StatePrimitive ancestor, ConstraintsState descendant, TicNode ancestorNode, TicNode descendantNode) {
         descendant.AddAncestor(ancestor);
-        var result = descendant.GetOptimizedOrNull();
+        var result = descendant.SimplifyOrNull();
         if (result == null)
             return false;
         descendantNode.State = result;
@@ -21,37 +21,158 @@ public class PushConstraintsFunctions : IStateFunction {
         => true;
 
     public bool Apply(
-        ConstrainsState ancestor, StatePrimitive descendant, TicNode ancestorNode,
+        ConstraintsState ancestor, StatePrimitive descendant, TicNode ancestorNode,
         TicNode descendantNode) {
+        // None ≤ CS[D..A]? is always valid: None is the bottom of the Optional axis
+        // and does not participate in the interval. Mirrors the Destruction cell.
+        // Ported from lang-mutable-collections.
+        if (descendant == StatePrimitive.None && ancestor.IsOptional)
+            return true;
         if (!ancestor.HasAncestor)
             return true;
-        return descendant.CanBeImplicitlyConvertedTo(ancestor.Ancestor);
+        return descendant.CanBePessimisticConvertedTo(ancestor.Ancestor);
     }
 
     public bool Apply(
-        ConstrainsState ancestor, ConstrainsState descendant, TicNode ancestorNode,
+        ConstraintsState ancestor, ConstraintsState descendant, TicNode ancestorNode,
         TicNode descendantNode) {
+        // Propagate IsComparable downward: if ancestor requires comparability,
+        // descendant must also be comparable. Rule: D.cmp := D.cmp ∨ A.cmp
+        if (ancestor.IsComparable && !descendant.IsComparable)
+            descendant.IsComparable = true;
+
+        // F-bound StructBound merges via Gcd (meet of upper bounds). Symmetric to Pull's
+        // Apply(CS,CS). Runs independently of HasAncestor — StructBound is a third dimension,
+        // peer to IsComparable (which is also propagated above without HasAncestor gating).
+        if (ancestor.HasStructBound) {
+            descendant.StructBound = !descendant.HasStructBound
+                ? SolvingFunctions.RewireStructBoundOwnership(ancestor.StructBound, ancestorNode, descendantNode)
+                : SolvingFunctions.GcdBound(descendant.StructBound, ancestor.StructBound,
+                                            descendantNode, ancestorNode);
+            if (!descendant.HasStructBound) return false; // conflict
+        }
+
         if (!ancestor.HasAncestor)
             return true;
 
-        descendant.AddAncestor(ancestor.Ancestor);
-        var result = descendant.GetOptimizedOrNull();
+        if (!descendant.TryAddAncestor(ancestor.Ancestor))
+            return false;
+        var result = descendant.SimplifyOrNull();
         if (result == null)
             return false;
         descendantNode.State = result;
         return true;
     }
 
-    public bool Apply(ConstrainsState ancestor, ICompositeState descendant, TicNode _, TicNode __) =>
-        !ancestor.HasAncestor || ancestor.Ancestor.Equals(StatePrimitive.Any);
+    public bool Apply(ConstraintsState ancestor, ICompositeState descendant, TicNode ancestorNode, TicNode descendantNode) {
+        if (ancestor.HasAncestor && ancestor.Ancestor != StatePrimitive.Any)
+            return false;
 
-    public bool Apply(ICompositeState ancestor, StatePrimitive descendant, TicNode _, TicNode __) => false;
+        // F-bound on ancestor projects fields down onto descendant struct (covariant width
+        // subtype). When ancestor has S and descendant is a StateStruct, treat S like an
+        // additional ancestor-side struct descendant — propagate any S-required field that's
+        // missing from desc (open-row extension), and push field-state constraints into shared
+        // fields. F-bound vs non-struct composite is a structural conflict — reject.
+        if (ancestor.HasStructBound)
+        {
+            if (descendant is StateStruct descStructForBound)
+            {
+                foreach (var bf in ancestor.StructBound.Fields)
+                {
+                    var df = descStructForBound.GetFieldOrNull(bf.Key);
+                    if (df == null)
+                    {
+                        if (descStructForBound.IsFrozen) return false;
+                        descStructForBound.AddField(bf.Key, bf.Value);
+                        continue;
+                    }
+                    var bfState = bf.Value.GetNonReference().State;
+                    var dfState = df.GetNonReference().State;
+                    if (bfState is ITypeState && dfState is ITypeState)
+                        SolvingFunctions.PushConstraints(df, bf.Value);
+                }
+                return true;
+            }
+            else if (descendant is StateArray || descendant is StateFun)
+            {
+                return false;
+            }
+        }
+
+        // If ancestor constrains has a struct descendant, propagate field constraints down.
+        // Struct fields are covariant (immutable struct).
+        if (ancestor.HasDescendant && ancestor.Descendant is StateStruct ancDescStruct
+                                   && descendant is StateStruct descStruct)
+        {
+            foreach (var ancField in ancDescStruct.Fields)
+            {
+                var descField = descStruct.GetFieldOrNull(ancField.Key);
+                if (descField == null) continue;
+
+                if (ancField.Value.State is StateOptional ancOpt && descField.State is ConstraintsState)
+                {
+                    // Merged struct field is Optional (LCA with none field).
+                    // Don't merge opt(T) into constraint — push inner element constraints instead.
+                    SolvingFunctions.PushConstraints(ancOpt.ElementNode, descField);
+                }
+                else if (descField.State is StateOptional descOpt && ancField.Value.State is ConstraintsState)
+                {
+                    SolvingFunctions.PushConstraints(descOpt.ElementNode, ancField.Value);
+                }
+                else if (descField.State is ConstraintsState && ancField.Value.State != StatePrimitive.Any)
+                    SolvingFunctions.MergeInplace(descField, ancField.Value);
+                else
+                    SolvingFunctions.PushConstraints(descField, ancField.Value);
+            }
+        }
+
+        return true;
+    }
+
+    public bool Apply(ICompositeState ancestor, StatePrimitive descendant, TicNode ancestorNode, TicNode descendantNode) {
+        if (ancestor is StateOptional opt)
+        {
+            // None ≤ opt(T) for any T — no constraint on T
+            // T_value ≤ opt(T) — propagate: value ≤ T (element of optional)
+            if (descendant.Name != PrimitiveTypeName.None)
+            {
+                descendantNode.AddAncestor(opt.ElementNode);
+                SolvingFunctions.PushConstraints(descendantNode, opt.ElementNode);
+            }
+            return true;
+        }
+        return false;
+    }
 
     public bool Apply(
         ICompositeState ancestor,
-        ConstrainsState descendant,
+        ConstraintsState descendant,
         TicNode ancestorNode,
         TicNode descendantNode) {
+        // Algebraic rule: if descendant is optional (has None branch) and ancestor is
+        // a non-Optional composite, the descendant must become opt(composite).
+        // Transform to Optional first, then push the composite constraint into the element.
+        // This is uniform for Array, Fun, Struct — not a special case per composite type.
+        if (descendant.IsOptional && ancestor is not StateOptional) {
+            // INVARIANT (debt #29): descendant never carries a StructBound here — the form
+            // CS{S, opt} does not arise: S is minted under an explicit Optional constructor
+            // (LiftMuTypes → opt(CS{S})) or at Destruction time (CS slot promotion), both
+            // after this stage; the only mid-Push minting path (Apply(CS,CS) S-transport onto
+            // an opt-flagged CS) needs an optional value under a NON-optional F-bounded param,
+            // i.e. an ill-typed program. If the form ever arises, this materialization must
+            // transport S into the inner CS via RewireStructBoundOwnership (and transport
+            // Preferred), exactly like its Pull twins (PullConstraintsFunctions.cs).
+            var innerNode = TicNode.CreateTypeVariableNode(
+                "e" + descendantNode.Name + "'",
+                ConstraintsState.Of(descendant.Descendant, descendant.Ancestor, descendant.IsComparable));
+            innerNode.IsOptionalElement = true;
+            descendantNode.State = new StateOptional(innerNode);
+            descendantNode.RemoveAncestor(ancestorNode);
+            innerNode.AddAncestor(ancestorNode);
+            SolvingFunctions.PushConstraints(innerNode, ancestorNode);
+            return true;
+        }
+
         switch (ancestor)
         {
             // if ancestor is composite type then descendant HAS to have same composite type
@@ -108,20 +229,122 @@ public class PushConstraintsFunctions : IStateFunction {
 
                 return false;
             }
+            case StateOptional ancOpt:
+            {
+                var result = SolvingFunctions.TransformToOptionalOrNull(descendantNode.Name, descendant);
+                if (result == null)
+                {
+                    if (descendant.HasDescendant && descendant.Descendant is StateStruct descStruct
+                                                 && descStruct.IsOpen)
+                    {
+                        // Struct descendant is OPEN (row-poly source — came from another ?.field,
+                        // a generic lambda param, or similar inference site). Wrap descendant in
+                        // Optional, carrying struct constraints into element. This handles map
+                        // lambda params on optional struct arrays where Pull single-pass didn't
+                        // propagate Optional to the lambda parameter.
+                        //
+                        // Guard MUST be IsOpen, not !IsSolved: a literal `{b=1}` has field type
+                        // `[U8..Re]I32!` (constraint state, not concrete primitive), so !IsSolved
+                        // would falsely trigger wrap on closed concrete literals and infect the
+                        // receiver with Optional — symptom: `a={b=1}; y=a?.b; z=a.c` rejects
+                        // `a.c` because `a` was widened to `{b,c}?`. Closed (literal) structs
+                        // must use implicit lift T ≤ Opt(T) like primitives, not the wrap path.
+                        // (MR5Bug5.)
+                        var innerNode = TicNode.CreateTypeVariableNode(
+                            "e" + descendantNode.Name + "'", descendant.GetCopy());
+                        innerNode.AddAncestor(ancOpt.ElementNode);
+                        descendantNode.State = new StateOptional(innerNode);
+                        descendantNode.RemoveAncestor(ancestorNode);
+                        SolvingFunctions.PushConstraints(innerNode, ancOpt.ElementNode);
+                        return true;
+                    }
+                    // When descendant has IsOptional flag (contains None branch),
+                    // it represents an Optional value — materialize to opt(inner)
+                    // and do element-level Push. Without this, the IsOptional flag
+                    // leaks through the direct ancestor edge to the Optional's element,
+                    // bypassing the Optional structural layer (e.g., ?? unwrapping).
+                    if (descendant.IsOptional)
+                    {
+                        var innerNode = TicNode.CreateTypeVariableNode(
+                            "e" + descendantNode.Name + "'", ConstraintsState.Empty);
+                        innerNode.AddAncestor(ancOpt.ElementNode);
+                        descendantNode.State = new StateOptional(innerNode);
+                        descendantNode.RemoveAncestor(ancestorNode);
+                        SolvingFunctions.PushConstraints(innerNode, ancOpt.ElementNode);
+                        return true;
+                    }
+                    // Implicit lift: T ≤ opt(T) for primitive/empty constraints
+                    descendantNode.RemoveAncestor(ancestorNode);
+                    // If descendant has non-None constraints, propagate to element
+                    if (!descendant.HasDescendant
+                        || descendant.Descendant != StatePrimitive.None)
+                    {
+                        descendantNode.AddAncestor(ancOpt.ElementNode);
+                        SolvingFunctions.PushConstraints(descendantNode, ancOpt.ElementNode);
+                    }
+                    return true;
+                }
+                if (result.ElementNode == ancOpt.ElementNode)
+                {
+                    descendantNode.RemoveAncestor(ancestorNode);
+                    return true;
+                }
+
+                result.ElementNode.AddAncestor(ancOpt.ElementNode);
+                descendantNode.State = result;
+                descendantNode.RemoveAncestor(ancestorNode);
+                SolvingFunctions.PushConstraints(result.ElementNode, ancOpt.ElementNode);
+                return true;
+            }
             default: return false;
         }
     }
 
     private static bool TryMergeStructFields(StateStruct ancStruct, StateStruct descStruct) {
+        if (ancStruct.IsOptionalSourced || descStruct.IsOptionalSourced)
+            ancStruct.IsOptionalSourced = descStruct.IsOptionalSourced = true;
         foreach (var ancField in ancStruct.Fields)
         {
             var descFieldNode = descStruct.GetFieldOrNull(ancField.Key);
-            if (descFieldNode == null)
+            if (descFieldNode == null) {
+                if (descStruct.IsOpen) {
+                    descStruct.AddField(ancField.Key, ancField.Value);
+                    continue;
+                }
                 return false;
-            //  i m not sure why - but it is very important to set descFieldNode as main merge node...
-            SolvingFunctions.MergeInplace(descFieldNode, ancField.Value);
+            }
+            var descNr = descFieldNode.GetNonReference();
+            var ancNr = ancField.Value.GetNonReference();
+            if (descNr == ancNr)
+                continue;
+            // None desc field: skip — None ≤ opt(T) handled by outer Optional layer.
+            if (descNr.State == StatePrimitive.None)
+                continue;
+            // None anc field: push to propagate None → descendant.
+            if (ancNr.State == StatePrimitive.None)
+                SolvingFunctions.PushConstraints(descFieldNode, ancField.Value);
+            // Optional ancestor field × ConstraintsState descendant field (primitive range).
+            // MergeInplace(opt(T), [U8..Re]I32!) fails — opt is composite, CS is primitive
+            // range; they are NOT unifiable shapes. The right algebra is Push (subtyping
+            // with implicit lift T ≤ opt(T)): propagate the opt's inner element constraint
+            // to descField so descField's range narrows to fit opt(T)'s element. Mirrors
+            // the inline handling in Apply(StateStruct, StateStruct) lines 107-115. (MR2Bug1.)
+            else if (ancNr.State is StateOptional ancOpt && descNr.State is ConstraintsState)
+                SolvingFunctions.PushConstraints(ancOpt.ElementNode, descFieldNode);
+            // Both solved primitives: Push (subtyping). Struct covariance: {x:I32} ≤ {x:Real}
+            // is valid but MergeInplace(I32, Real) requires equality → throws.
+            // Composites/CS: MergeInplace needed for node unification (Optional propagation).
+            else if (descNr.IsSolved && ancNr.IsSolved && descNr.State is StatePrimitive && ancNr.State is StatePrimitive)
+                SolvingFunctions.PushConstraints(descFieldNode, ancField.Value);
+            else
+                SolvingFunctions.MergeInplace(descFieldNode, ancField.Value);
         }
 
+        return true;
+    }
+
+    public bool Apply(StateOptional ancestor, StateOptional descendant, TicNode ancestorNode, TicNode descendantNode) {
+        SolvingFunctions.PushConstraints(descendant.ElementNode, ancestor.ElementNode);
         return true;
     }
 
@@ -137,12 +360,55 @@ public class PushConstraintsFunctions : IStateFunction {
         return true;
     }
 
-    public bool Apply(StateStruct ancestor, StateStruct descendant, TicNode ancestorNode, TicNode descendantNode) =>
-        TryMergeStructFields(ancestor, descendant);
+    public bool Apply(StateStruct ancestor, StateStruct descendant, TicNode ancestorNode, TicNode descendantNode) {
+        // Opt-sourcedness propagates across the merge.
+        if (ancestor.IsOptionalSourced || descendant.IsOptionalSourced)
+            ancestor.IsOptionalSourced = descendant.IsOptionalSourced = true;
+        foreach (var ancField in ancestor.Fields)
+        {
+            var descField = descendant.GetFieldOrNull(ancField.Key);
+            if (descField == null)
+            {
+                if (descendant.IsFrozen)
+                    return false;
+                descendant.AddField(ancField.Key, ancField.Value);
+                descendantNode.State = descendant;
+            }
+            else
+            {
+                // None field: skip push.
+                if (descField.GetNonReference().State == StatePrimitive.None)
+                    continue;
+                SolvingFunctions.PushConstraints(descField, ancField.Value);
+            }
+        }
+        // Width propagation (Push): descendant struct may have extra fields.
+        // Propagate to OPEN ancestors only (row polymorphism: "at least these fields").
+        // Closed ancestors from array LCA or struct literals are NOT widened.
+        if (ancestor.IsOpen)
+        {
+            foreach (var descField in descendant.Fields)
+            {
+                if (ancestor.GetFieldOrNull(descField.Key) == null)
+                {
+                    ancestor.AddField(descField.Key, descField.Value);
+                    ancestorNode.State = ancestor;
+                }
+            }
+        }
+        return true;
+    }
 
     private static void PushFunTypeArgumentsConstraints(StateFun descFun, StateFun ancFun) {
+        // Variance for `descFun ≤ ancFun` (function subtyping):
+        //   args contravariant — anc.argᵢ ≤ desc.argᵢ, so push (edge-desc=anc.arg, edge-anc=desc.arg)
+        //   ret  covariant     — desc.ret ≤ anc.ret
+        // Mirrors the Destruction Fun-arm (DestructionFunctions.Apply(StateFun,StateFun)) and
+        // Pull's edge wiring (anc.argᵢ.AddAncestor(desc.argᵢ)); the previous covariant pairing
+        // (desc.argᵢ pushed under anc.argᵢ) was inverted — compensated in practice because Pull
+        // dissolves fun≤fun edges before Push reaches this cell. (debt #24)
         for (int i = 0; i < descFun.ArgsCount; i++)
-            SolvingFunctions.PushConstraints(descFun.ArgNodes[i], ancFun.ArgNodes[i]);
+            SolvingFunctions.PushConstraints(ancFun.ArgNodes[i], descFun.ArgNodes[i]);
 
         SolvingFunctions.PushConstraints(descFun.RetNode, ancFun.RetNode);
     }

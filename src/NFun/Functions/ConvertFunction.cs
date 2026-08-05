@@ -6,6 +6,7 @@ using System.Net;
 using System.Text;
 using NFun.Exceptions;
 using NFun.Interpretation.Functions;
+using NFun.ParseErrors;
 using NFun.Runtime.Arrays;
 using NFun.Types;
 
@@ -16,90 +17,384 @@ public class ConvertFunction : GenericFunctionBase {
         "convert",
         new[] { GenericConstrains.Any, GenericConstrains.Any },
         FunnyType.Generic(0), FunnyType.Generic(1)) {
+        ArgProperties = FunArgProperty.FromNames("value");
     }
 
     public override IConcreteFunction CreateConcrete(FunnyType[] concreteTypes, IFunctionSelectorContext context) {
         var from = concreteTypes[1];
         var to = concreteTypes[0];
+
+        // Compile-time hard-reject diagnostics with directional hints. Matrix
+        // ✗ cells stay rejected and `:T?` does NOT rescue them. The inner
+        // helper (TryBuildConverterFn) is strictly Try-shaped; emitting the
+        // hint at this layer keeps the runtime any-dispatcher path free of
+        // parse-time exceptions. Unwrap opt for the check — `:T?` annotation
+        // must not silently lift a hard reject.
+        var fromCore = from.BaseType == BaseFunnyType.Optional
+            ? from.OptionalTypeSpecification.ElementType : from;
+        var toCore = to.BaseType == BaseFunnyType.Optional
+            ? to.OptionalTypeSpecification.ElementType : to;
+        ThrowIfHardReject(fromCore, toCore);
+
+        // PRAGMATIC matrix §2.3: opt(A) source propagates through the wrapper.
+        //   opt(A) → opt(B): apply class(A → B); none preserved
+        //   opt(A) → B:      always 🪂 — throws on none, otherwise apply (A → B)
+        //   opt(A) → text:   ✓ (toText handles none)
+        //   opt(A) → any:    I
+        //   opt(A) → byte[]: ✗ (no canonical byte repr for none) — falls through to FU887
+        // Identity opt(A)→opt(A) is also handled here (no-op).
+        if (from.BaseType == BaseFunnyType.Optional)
+        {
+            var fromUnwrapped = from.OptionalTypeSpecification.ElementType;
+
+            // opt(A) → any | opt(A) → opt(A): identity. (text branch handled below.)
+            if (to == FunnyType.Any || from == to)
+                return new ConcreteConverter(o => o, from, to);
+
+            // opt(A) → text: toText knows how to render none.
+            if (to == FunnyType.Text)
+                return new ConcreteConverter(o => new TextFunnyArray(TypeHelper.GetFunText(o)), from, to);
+
+            // opt(A) → byte[] / other serializer targets: ✗ — no canonical byte
+            // representation exists for `none`. The inner (A → byte[]) converter
+            // would otherwise build successfully, masking the absence of a
+            // morphism with a runtime-on-none throw. Reject at compile time.
+            if (to.ArrayTypeSpecification?.FunnyType == FunnyType.UInt8 ||
+                to.ArrayTypeSpecification?.FunnyType == FunnyType.Bool)
+                throw Errors.ConvertNotSupported(from.ToString(), to.ToString(),
+                    "Serialization of optional values is not defined: `none` has no canonical byte representation.");
+
+            if (to.BaseType == BaseFunnyType.Optional)
+            {
+                // opt(A) → opt(B): apply (A → B) on the value side; preserve none.
+                var toUnwrapped = to.OptionalTypeSpecification.ElementType;
+                if (fromUnwrapped == toUnwrapped || toUnwrapped == FunnyType.Any)
+                    return new ConcreteConverter(o => o, from, to);
+                var innerFn = TryBuildConverterFn(fromUnwrapped, toUnwrapped, context);
+                if (innerFn == null)
+                    throw Errors.ConvertNotSupported(from.ToString(), to.ToString());
+                // Inner failures (parse/overflow) still bubble for :opt(B) — the user
+                // asked for opt(B) but the value branch can still throw. SoftFailureConverter
+                // semantics apply only when the OUTER target is opt; here both sides are
+                // opt so we wrap to rescue inner soft failures into `none` too — matches
+                // the principle "the optional wrapper absorbs soft errors".
+                // `none` at runtime is FunnyNone.Instance, not null.
+                return new SoftFailureConverter(o => o is FunnyNone ? o : innerFn(o), from, to);
+            }
+
+            // opt(A) → B (non-opt): 🪂 — throws on none.
+            {
+                var innerFn = TryBuildConverterFn(fromUnwrapped, to, context);
+                if (innerFn == null)
+                    throw Errors.ConvertNotSupported(from.ToString(), to.ToString());
+                return new ConcreteConverter(o => {
+                    if (o is FunnyNone)
+                        throw new FunnyRuntimeException(
+                            $"Cannot convert `none` to non-optional `{to}`. Use `:{to}?` or unwrap with `!`.");
+                    return innerFn(o);
+                }, from, to);
+            }
+        }
+
+        // PRAGMATIC matrix §1.5/§2.4: `any → T` (T ≠ any, ≠ text) is 🪂.
+        // At compile time we don't know the runtime type of the `any` value, so we
+        // build a dispatcher: at runtime, inspect the actual CLR type of the value,
+        // map it to a FunnyType, and apply the regular (actualType → T) converter.
+        // This mirrors all the normal (S → T) rules — including soft failures
+        // (parse, overflow) and static-✗ cases (which become runtime errors here
+        // since we couldn't check at compile time).
+        //
+        // The to == text branch is handled below by VarTypeConverter (toText is
+        // total for any source). to == any is identity (already handled above for
+        // from == to). All other targets need this dispatcher.
+        if (from == FunnyType.Any && to != FunnyType.Text && to != FunnyType.Any)
+        {
+            // opt-target: wrap in SoftFailureConverter for `none` rescue.
+            if (to.BaseType == BaseFunnyType.Optional)
+            {
+                var unwrapped = to.OptionalTypeSpecification.ElementType;
+                return new SoftFailureConverter(BuildAnyDispatcher(unwrapped, context), from, to);
+            }
+            return new ConcreteConverter(BuildAnyDispatcher(to, context), from, to);
+        }
+
+        // PRAGMATIC matrix §3: when target is opt(U), the `?` is the user opt-in for
+        // "try" semantics — soft-fallible (🪂) conversions return `none` on failure
+        // instead of throwing. The underlying (from → U) converter does the work; we
+        // wrap it in a try/catch that maps documented soft exceptions to `none`.
+        // Static-impossible (✗) pairs stay rejected — the `?` doesn't rescue them.
+        if (to.BaseType == BaseFunnyType.Optional)
+        {
+            var unwrapped = to.OptionalTypeSpecification.ElementType;
+            // Identity / lift T → opt(T): no inner conversion needed.
+            if (from == unwrapped || unwrapped == FunnyType.Any)
+                return new ConcreteConverter(o => o, from, to);
+            // Build the inner (from → U) converter. If `unwrapped` is opt itself
+            // (opt(opt(T)) request), fall through to the normal path which will
+            // either find an identity match or throw FU887.
+            var innerFn = TryBuildConverterFn(from, unwrapped, context);
+            if (innerFn == null)
+                throw Errors.ConvertNotSupported(from.ToString(), to.ToString());
+            return new SoftFailureConverter(innerFn, from, to);
+        }
+
+        // Non-opt target: standard path. Build a Func<object,object> via the
+        // shared helper and wrap in ConcreteConverter (which catches and rethrows
+        // as FunnyRuntimeException — Phase A unchanged behavior).
+        var fn = TryBuildConverterFn(from, to, context);
+        if (fn == null)
+            throw Errors.ConvertNotSupported(from.ToString(), to.ToString());
+        return new ConcreteConverter(fn, from, to);
+    }
+
+    /// <summary>
+    /// Hard-reject pairs per the PRAGMATIC matrix. Compile-time hints emitted
+    /// from <see cref="ThrowIfHardReject"/>; runtime any-dispatcher path just
+    /// sees no morphism.
+    /// </summary>
+    private static bool IsHardReject(FunnyType from, FunnyType to) =>
+        // §1.4: ip → i32 ✗ — would yield negative for high IPs.
+        (from == FunnyType.Ip && to == FunnyType.Int32) ||
+        // §1.3: real → char ✗ — a real is not a codepoint.
+        (from == FunnyType.Real && to == FunnyType.Char);
+
+    /// <summary>
+    /// Compile-time hard-reject diagnostic with a directional hint. Called
+    /// from <see cref="CreateConcrete"/> before <see cref="TryBuildConverterFn"/>
+    /// so the user gets `:uint`/`:long`/intermediate-step suggestions instead
+    /// of a generic FU887.
+    /// </summary>
+    private static void ThrowIfHardReject(FunnyType from, FunnyType to) {
+        if (from == FunnyType.Ip && to == FunnyType.Int32)
+            throw Errors.ConvertNotSupported(
+                from.ToString(), to.ToString(),
+                "Use :uint (natural) or :long (widening) instead — :int would lose the non-negative property for high IPs.");
+        if (from == FunnyType.Real && to == FunnyType.Char)
+            throw Errors.ConvertNotSupported(
+                from.ToString(), to.ToString(),
+                "A real value is not a codepoint. Convert via an integer first, e.g. `convert(convert(x):int):char`.");
+    }
+
+    /// <summary>
+    /// Resolves the raw conversion delegate for a (from → to) pair, or null if no
+    /// morphism exists. Both `to` and `from` are non-opt at this point — opt handling
+    /// is done by the caller. Strictly Try-shaped: never throws.
+    /// </summary>
+    private static Func<object, object> TryBuildConverterFn(
+        FunnyType from, FunnyType to, IFunctionSelectorContext context) {
+
+        // Hard rejects (ip→i32, real→char) handled by ThrowIfHardReject at the
+        // compile-time call site; here they fall through to `return null` like
+        // any other "no morphism" pair.
+        if (IsHardReject(from, to))
+            return null;
+
         if (to == FunnyType.Any || from == to)
-            return new ConcreteConverter(o => o, from, to);
+            return o => o;
+
         if (to == FunnyType.Text)
         {
             if (from.ArrayTypeSpecification?.FunnyType == FunnyType.UInt8)
-                return new ConcreteConverter(o => {
+                return o => {
                     var array = (IFunnyArray)o;
                     return new TextFunnyArray(Encoding.Unicode.GetString(array.ToArrayOf<byte>()));
-                }, from, to);
-            else
-                return new ConcreteConverter(o => new TextFunnyArray(o.ToString()), from, to);
+                };
+            return o => new TextFunnyArray(TypeHelper.GetFunText(o));
         }
 
-
         if (from == FunnyType.Text && to.ArrayTypeSpecification?.FunnyType == FunnyType.UInt8)
-            return new ConcreteConverter(o =>
-                new ImmutableFunnyArray(Encoding.Unicode.GetBytes(((IFunnyArray)o).ToText())), from, to);
-        var converter = VarTypeConverter.GetConverterOrNull(context.Converter.TypeBehaviour, @from, to);
+            return o => new ImmutableFunnyArray(Encoding.Unicode.GetBytes(((IFunnyArray)o).ToText()));
+
+        // C-style bool ↔ numeric (PRAGMATIC matrix §1.2).
+        var boolNumeric = CreateBoolNumericConverterOrNull(from, to);
+        if (boolNumeric != null)
+            return boolNumeric;
+
+        var converter = VarTypeConverter.GetConverterOrNull(context.Converter.TypeBehaviour, from, to);
         if (converter != null)
-            return new ConcreteConverter(converter, from, to);
+            return converter;
 
         if (to == FunnyType.Ip)
         {
-            var ipConverterOrNull = ConvertFunction.CreateToIpConverterOrNull(from);
+            var ipConverterOrNull = CreateToIpConverterOrNull(from);
             if (ipConverterOrNull != null)
-                return new ConcreteConverter(ipConverterOrNull, from, to);
+                return ipConverterOrNull;
         }
 
         if (from == FunnyType.Char)
         {
-            var charConverterOrNull = ConvertFunction.CreateFromCharConverterOrNull(to);
+            var charConverterOrNull = CreateFromCharConverterOrNull(to);
             if (charConverterOrNull != null)
-                return new ConcreteConverter(charConverterOrNull, from, to);
+                return charConverterOrNull;
         }
 
         if (from == FunnyType.Ip)
         {
-            var ipConverterOrNull = ConvertFunction.CreateFromIpConverterOrNull(to);
+            var ipConverterOrNull = CreateFromIpConverterOrNull(to);
             if (ipConverterOrNull != null)
-                return new ConcreteConverter(ipConverterOrNull, from, to);
+                return ipConverterOrNull;
         }
 
         if (to.ArrayTypeSpecification?.FunnyType == FunnyType.UInt8)
         {
             var serializer = CreateSerializerOrNull(from);
             if (serializer != null)
-                return new ConcreteConverter(serializer, from, to);
+                return serializer;
         }
         else if (to.ArrayTypeSpecification?.FunnyType == FunnyType.Bool)
         {
             var serializer = CreateBinarizerOrNull(from);
-
             if (serializer != null)
-                return new ConcreteConverter(serializer, from, to);
+                return serializer;
         }
 
         if (from.ArrayTypeSpecification?.FunnyType == FunnyType.UInt8)
         {
             var deserializer = CreateDeserializerOrNull(to);
             if (deserializer != null)
-                return new ConcreteConverter(deserializer, from, to);
+                return deserializer;
         }
         else if (from.IsText)
         {
             var parser = CreateParserOrNull(to);
             if (parser != null)
-                return new ConcreteConverter(parser, from, to);
+                return parser;
         }
 
-        throw new InvalidOperationException(
-            $"Function {Name} cannot be generated for types [{string.Join(", ", concreteTypes)}]");
+        return null;
+    }
+
+    /// <summary>
+    /// Builds a runtime dispatcher for `convert(x:any):T`. At each call, looks at
+    /// the actual CLR type of the value, maps it to a FunnyType, and applies the
+    /// regular (actualSourceType → T) converter resolved via TryBuildConverterFn.
+    /// On no-morphism, throws ArgumentException — wrapped to FunnyRuntimeException
+    /// by ConcreteConverter for `:T` targets, caught by SoftFailureConverter for
+    /// `:T?` targets and yielding `none`.
+    /// </summary>
+    private static Func<object, object> BuildAnyDispatcher(FunnyType to, IFunctionSelectorContext context) =>
+        value => {
+            if (value is FunnyNone)
+                throw new ArgumentException(
+                    $"Cannot convert `none` held in any to non-optional `{to}`");
+            var actualFrom = InferFunnyTypeFromValueOrEmpty(value);
+            if (actualFrom.Equals(FunnyType.Empty))
+                throw new ArgumentException(
+                    $"any holds {value?.GetType().Name ?? "null"}, no convert to {to} exists");
+            // Same identity / lift fast-paths as the main CreateConcrete logic.
+            if (actualFrom == to)
+                return value;
+            var fn = TryBuildConverterFn(actualFrom, to, context);
+            if (fn == null)
+                throw new ArgumentException(
+                    $"any holds {actualFrom}, no convert to {to} exists");
+            return fn(value);
+        };
+
+    /// <summary>
+    /// Infers the FunnyType of a runtime value based on its CLR type. Used by the
+    /// any-dispatcher to delegate to the normal converter pipeline. Returns
+    /// FunnyType.Empty when the CLR type isn't representable as a primitive
+    /// morphism source (struct, custom object, …) so the caller can reject cleanly.
+    /// </summary>
+    private static FunnyType InferFunnyTypeFromValueOrEmpty(object value) => value switch {
+        byte   => FunnyType.UInt8,
+        ushort => FunnyType.UInt16,
+        uint   => FunnyType.UInt32,
+        ulong  => FunnyType.UInt64,
+        short  => FunnyType.Int16,
+        int    => FunnyType.Int32,
+        long   => FunnyType.Int64,
+        double or decimal => FunnyType.Real,
+        float  => FunnyType.Float32,
+        sbyte  => FunnyType.Int8,
+        bool   => FunnyType.Bool,
+        char   => FunnyType.Char,
+        System.Net.IPAddress => FunnyType.Ip,
+        Runtime.Arrays.TextFunnyArray  => FunnyType.Text,
+        Runtime.Arrays.IFunnyArray arr => FunnyType.ArrayOf(arr.ElementType),
+        // Structs, custom CLR objects, and anything else not in the primitive
+        // matrix have no algebraic morphism to a primitive target. Signal Empty
+        // so the caller throws a clear "no convert" error.
+        _      => FunnyType.Empty,
+    };
+
+    /// <summary>
+    /// C-style bool ↔ numeric morphism per PRAGMATIC matrix §1.2.
+    /// Total in both directions; returns null if (from, to) isn't a bool↔numeric pair.
+    /// </summary>
+    private static Func<object, object> CreateBoolNumericConverterOrNull(FunnyType from, FunnyType to) {
+        // bool → numeric: false → 0, true → 1.
+        if (from == FunnyType.Bool) {
+            return to.BaseType switch {
+                BaseFunnyType.UInt8  => o => (byte)((bool)o ? 1 : 0),
+                BaseFunnyType.UInt16 => o => (ushort)((bool)o ? 1 : 0),
+                BaseFunnyType.UInt32 => o => (uint)((bool)o ? 1u : 0u),
+                BaseFunnyType.UInt64 => o => (ulong)((bool)o ? 1UL : 0UL),
+                BaseFunnyType.Int16  => o => (short)((bool)o ? 1 : 0),
+                BaseFunnyType.Int32  => o => (bool)o ? 1 : 0,
+                BaseFunnyType.Int64  => o => (long)((bool)o ? 1L : 0L),
+                BaseFunnyType.Int8   => o => (sbyte)((bool)o ? 1 : 0),
+                BaseFunnyType.Real   => o => (bool)o ? 1.0 : 0.0,
+                BaseFunnyType.Float32 => o => (bool)o ? 1.0f : 0.0f,
+                _ => null
+            };
+        }
+        // numeric → bool: 0 → false, non-zero → true.
+        if (to == FunnyType.Bool) {
+            return from.BaseType switch {
+                BaseFunnyType.UInt8  => o => (byte)o != 0,
+                BaseFunnyType.UInt16 => o => (ushort)o != 0,
+                BaseFunnyType.UInt32 => o => (uint)o != 0,
+                BaseFunnyType.UInt64 => o => (ulong)o != 0,
+                BaseFunnyType.Int16  => o => (short)o != 0,
+                BaseFunnyType.Int32  => o => (int)o != 0,
+                BaseFunnyType.Int64  => o => (long)o != 0,
+                BaseFunnyType.Int8   => o => (sbyte)o != 0,
+                BaseFunnyType.Float32 => o => {
+                    var f = (float)o;
+                    return !float.IsNaN(f) && f != 0.0f;
+                },
+                // real → bool: 0.0/-0.0/NaN → false, finite non-zero / ±Inf → true.
+                // `d != 0.0` already yields false for both ±0.0 (IEEE-754 equality).
+                // NaN compares unequal to everything, so `d != 0.0` is true for NaN — must
+                // exclude NaN explicitly. ±Inf is finite-or-not-NaN, so passes through.
+                BaseFunnyType.Real => o => {
+                    if (o is decimal m) return m != 0m;
+                    var d = (double)o;
+                    return !double.IsNaN(d) && d != 0.0;
+                },
+                _ => null
+            };
+        }
+        return null;
     }
 
     private static Func<object, object> CreateToIpConverterOrNull(FunnyType from) =>
         from.BaseType switch {
-            BaseFunnyType.Int32 => o => new IPAddress(BitConverter.GetBytes((Int32)o)),
+            // Per PRAGMATIC matrix §1.4: i32/i64/u64 → ip are all 🪂 (must fit
+            // [0, 2^32-1]). Throws OverflowException on bad value, which the runtime
+            // wrapper layers turn into a FunnyRuntimeException for `:ip` and `none`
+            // for `:ip?`. u32 → ip is total ✓ (every u32 value is a valid IPv4).
+            BaseFunnyType.Int32 => o => {
+                var v = (int)o;
+                if (v < 0)
+                    throw new OverflowException($"Cannot convert negative int {v} to Ip: IPv4 requires non-negative value in [0, 2^32-1]");
+                return new IPAddress((long)(uint)v);
+            },
             BaseFunnyType.UInt32 => o => new IPAddress((long)(UInt32)o),
-            BaseFunnyType.Int64 => o => new IPAddress((long)o),
-            BaseFunnyType.UInt64 => o => new IPAddress((long)(UInt64)o),
+            BaseFunnyType.Int64 => o => {
+                var v = (long)o;
+                if (v < 0L || v > uint.MaxValue)
+                    throw new OverflowException($"Cannot convert int64 {v} to Ip: IPv4 requires value in [0, 2^32-1]");
+                return new IPAddress(v);
+            },
+            BaseFunnyType.UInt64 => o => {
+                var v = (ulong)o;
+                if (v > uint.MaxValue)
+                    throw new OverflowException($"Cannot convert uint64 {v} to Ip: IPv4 requires value in [0, 2^32-1]");
+                return new IPAddress((long)v);
+            },
             BaseFunnyType.ArrayOf => from.ArrayTypeSpecification.FunnyType.BaseType switch {
                 BaseFunnyType.Char => o => IPAddress.Parse(((IFunnyArray)o).ToText()),
                 BaseFunnyType.UInt8 => o => new IPAddress(((IFunnyArray)o).As<byte>().ToArray()),
@@ -160,7 +455,12 @@ public class ConvertFunction : GenericFunctionBase {
         static byte[] ToBytes(object arg) => ((IPAddress)arg).GetAddressBytes();
 
         return to.BaseType switch {
-            BaseFunnyType.Int32 => o => BitConverter.ToInt32(ToBytes(o), 0),
+            // BaseFunnyType.Int32 deliberately omitted — ip→i32 is ✗ per PRAGMATIC
+            // matrix §1.4 (would produce negative for high IPs, losing the natural
+            // non-negative identity of an IPv4). The compile-time reject is emitted
+            // by the explicit pre-check in TryBuildConverterFn so users get a
+            // pointed hint about :uint / :long alternatives instead of a generic
+            // FU887 from this method returning null.
             BaseFunnyType.UInt32 => o => BitConverter.ToUInt32(ToBytes(o), 0),
             BaseFunnyType.Int64 => o => (long)BitConverter.ToUInt32(ToBytes(o), 0),
             BaseFunnyType.UInt64 => o => (ulong)BitConverter.ToUInt32(ToBytes(o), 0),
@@ -223,6 +523,8 @@ public class ConvertFunction : GenericFunctionBase {
             BaseFunnyType.Int16 => o => ToBoolFunnyArray(BitConverter.GetBytes((short)o)),
             BaseFunnyType.Int32 => o => ToBoolFunnyArray(BitConverter.GetBytes((int)o)),
             BaseFunnyType.Int64 => o => ToBoolFunnyArray(BitConverter.GetBytes((long)o)),
+            BaseFunnyType.Int8 => o => ToBoolFunnyArray(new[] { unchecked((byte)(sbyte)o) }),
+            BaseFunnyType.Float32 => o => ToBoolFunnyArray(BitConverter.GetBytes((float)o)),
             BaseFunnyType.Real => o => ToBoolFunnyArray(BitConverter.GetBytes((double)o)),
             _ when fromType.IsText => o => ToBoolFunnyArray(Encoding.Unicode.GetBytes(((IFunnyArray)o).ToText())),
             _ => null
@@ -257,6 +559,8 @@ public class ConvertFunction : GenericFunctionBase {
             BaseFunnyType.Int16 => o => new ImmutableFunnyArray(BitConverter.GetBytes((short)o)),
             BaseFunnyType.Int32 => o => new ImmutableFunnyArray(BitConverter.GetBytes((int)o)),
             BaseFunnyType.Int64 => o => new ImmutableFunnyArray(BitConverter.GetBytes((long)o)),
+            BaseFunnyType.Int8 => o => new ImmutableFunnyArray(new[] { unchecked((byte)(sbyte)o) }),
+            BaseFunnyType.Float32 => o => new ImmutableFunnyArray(BitConverter.GetBytes((float)o)),
             BaseFunnyType.Real => o => new ImmutableFunnyArray(BitConverter.GetBytes((double)o)),
             _ => from.IsText ? o => new ImmutableFunnyArray(Encoding.Unicode.GetBytes(((IFunnyArray)o).ToText())) : null
         };
@@ -269,7 +573,17 @@ public class ConvertFunction : GenericFunctionBase {
                 if (string.Equals(str, "1", StringComparison.OrdinalIgnoreCase)) return true;
                 if (string.Equals(str, "false", StringComparison.OrdinalIgnoreCase)) return false;
                 if (string.Equals(str, "0", StringComparison.Ordinal)) return false;
-                return null;
+                throw new FormatException($"Cannot convert '{str}' to bool");
+            },
+            // PRAGMATIC matrix §1.6: text → char is 🪂. Accept only single-character
+            // text; otherwise throw ArgumentException — SoftFailureConverter rescues
+            // it to `none` for `:char?` and ConcreteConverter rewraps as
+            // FunnyRuntimeException for `:char`.
+            BaseFunnyType.Char => o => {
+                var str = ((IFunnyArray)o).ToText();
+                if (str.Length == 1) return str[0];
+                throw new ArgumentException(
+                    $"Cannot convert text '{str}' to char: length must be exactly 1, got {str.Length}");
             },
             BaseFunnyType.UInt8 =>  o => byte.Parse(((IFunnyArray)o).ToText()),
             BaseFunnyType.UInt16 => o => ushort.Parse(((IFunnyArray)o).ToText()),
@@ -278,6 +592,8 @@ public class ConvertFunction : GenericFunctionBase {
             BaseFunnyType.Int16 =>  o => Int16.Parse(((IFunnyArray)o).ToText()),
             BaseFunnyType.Int32 =>  o => Int32.Parse(((IFunnyArray)o).ToText()),
             BaseFunnyType.Int64 =>  o => Int64.Parse(((IFunnyArray)o).ToText()),
+            BaseFunnyType.Int8 =>   o => sbyte.Parse(((IFunnyArray)o).ToText()),
+            BaseFunnyType.Float32 => o => float.Parse(((IFunnyArray)o).ToText(), CultureInfo.InvariantCulture),
             BaseFunnyType.Real =>   o => double.Parse(((IFunnyArray)o).ToText(), CultureInfo.InvariantCulture),
             _ => null
         };
@@ -288,20 +604,43 @@ public class ConvertFunction : GenericFunctionBase {
                 var bytes = ((IFunnyArray)o).ToArrayOf<byte>();
                 if (bytes.Length == 1)
                     return Encoding.ASCII.GetChars(bytes)[0];
-                else
+                if (bytes.Length == 2)
                     return Encoding.Unicode.GetChars(bytes)[0];
+                throw new ArgumentException(
+                    $"byte[] → char requires exactly 1 (ASCII) or 2 (UTF-16) bytes; got {bytes.Length}");
             },
-            BaseFunnyType.Bool => o => AsByteArray(o)[0] == 1,
-            BaseFunnyType.UInt8 => o => AsByteArray(o)[0],
-            BaseFunnyType.UInt16 => o => BitConverter.ToUInt16(AsByteArray(o), 0),
-            BaseFunnyType.UInt32 => o => BitConverter.ToUInt32(AsByteArray(o), 0),
-            BaseFunnyType.UInt64 => o => BitConverter.ToUInt64(AsByteArray(o), 0),
-            BaseFunnyType.Int16 => o => BitConverter.ToInt16(AsByteArray(o), 0),
-            BaseFunnyType.Int32 => o => BitConverter.ToInt32(AsByteArray(o), 0),
-            BaseFunnyType.Int64 => o => BitConverter.ToInt64(AsByteArray(o), 0),
-            BaseFunnyType.Real => o => BitConverter.ToDouble(AsByteArray(o), 0),
+            // Strict-length byte[] deserialization per PRAGMATIC matrix §1.6.
+            // Each numeric target requires exactly N bytes for its width.
+            // Throws ArgumentException on length mismatch — caught by
+            // SoftFailureConverter for `:T?` rescue (returns `none`).
+            // Previous behavior silently zero-padded short arrays via
+            // AsByteArray, masking the strictness the spec requires.
+            BaseFunnyType.Bool => o => StrictBytes(o, 1)[0] == 1,
+            BaseFunnyType.UInt8 => o => StrictBytes(o, 1)[0],
+            BaseFunnyType.UInt16 => o => BitConverter.ToUInt16(StrictBytes(o, 2), 0),
+            BaseFunnyType.UInt32 => o => BitConverter.ToUInt32(StrictBytes(o, 4), 0),
+            BaseFunnyType.UInt64 => o => BitConverter.ToUInt64(StrictBytes(o, 8), 0),
+            BaseFunnyType.Int16 => o => BitConverter.ToInt16(StrictBytes(o, 2), 0),
+            BaseFunnyType.Int32 => o => BitConverter.ToInt32(StrictBytes(o, 4), 0),
+            BaseFunnyType.Int64 => o => BitConverter.ToInt64(StrictBytes(o, 8), 0),
+            BaseFunnyType.Int8 => o => unchecked((sbyte)StrictBytes(o, 1)[0]),
+            BaseFunnyType.Float32 => o => BitConverter.ToSingle(StrictBytes(o, 4), 0),
+            BaseFunnyType.Real => o => BitConverter.ToDouble(StrictBytes(o, 8), 0),
             _ => to.IsText ? o => new ImmutableFunnyArray(Encoding.Unicode.GetBytes(((IFunnyArray)o).ToText())) : null
         };
+
+    /// <summary>
+    /// Validates that the input byte array has exactly the expected width for
+    /// the target primitive type. Throws ArgumentException on mismatch — soft
+    /// exception, caught by SoftFailureConverter for `:T?` to yield `none`.
+    /// </summary>
+    private static byte[] StrictBytes(object array, int expectedWidth) {
+        var val = (IFunnyArray)array;
+        if (val.Count != expectedWidth)
+            throw new ArgumentException(
+                $"byte[] deserialization requires exactly {expectedWidth} bytes; got {val.Count}");
+        return val.SelectToArray(expectedWidth, Convert.ToByte);
+    }
 
     private class ConcreteConverter : FunctionWithSingleArg {
         private readonly Func<object, object> _converter;
@@ -318,25 +657,44 @@ public class ConvertFunction : GenericFunctionBase {
             }
             catch (Exception e)
             {
-                throw new FunnyRuntimeException($"Cannot convert {a} to type {this.ReturnType}", e);
+                throw new FunnyRuntimeException($"Cannot convert {a} to type {ReturnType}", e);
             }
         }
     }
 
-    //TODO wtf this method doing???
-    private static byte[] AsByteArray(object array) {
-        var val = (IFunnyArray)array;
-        try
-        {
-            return val.Count switch {
-                > 4 => throw new FunnyRuntimeException("Array is too long"),
-                4 => val.SelectToArray(val.Count, Convert.ToByte),
-                _ => val.Concat(new int[4 - val.Count].Cast<object>()).Select(Convert.ToByte).ToArray()
-            };
-        }
-        catch (Exception e)
-        {
-            throw new FunnyRuntimeException($"Array '{val}' cannot be converted into int", e);
+    /// <summary>
+    /// PRAGMATIC matrix §3: when the user writes `:T?`, soft runtime failures
+    /// (parse, overflow, shape mismatch) translate to `none` instead of throwing.
+    /// Hard failures (OOM, stack overflow, internal NFun bugs surfacing as
+    /// FunnyRuntimeException) still propagate — those are not recoverable.
+    ///
+    /// "Soft" exceptions caught here (closed set — all converter throw-sites
+    /// route soft failures through one of these typed exceptions at the source):
+    ///   • FormatException — text parsing failures (int.Parse, IPAddress.Parse, …)
+    ///   • OverflowException — numeric narrowing, char codepoint overflow
+    ///   • ArgumentException / ArgumentOutOfRangeException — shape mismatch
+    ///     (wrong-length byte[], char-length, any-dispatcher no-morphism, …)
+    /// </summary>
+    private class SoftFailureConverter : FunctionWithSingleArg {
+        private readonly Func<object, object> _converter;
+
+        public SoftFailureConverter(Func<object, object> converter, FunnyType from, FunnyType optTo) : base(
+            "convert", optTo,
+            from) =>
+            _converter = converter;
+
+        public override object Calc(object a) {
+            try
+            {
+                return _converter(a);
+            }
+            // Return FunnyNone.Instance (the runtime `none` value), NOT CLR null —
+            // composite opt targets (T[]?, opt struct fields) read through deref
+            // paths that crash with NRE on null. (MR8Bug1.)
+            catch (FormatException) { return FunnyNone.Instance; }
+            catch (OverflowException) { return FunnyNone.Instance; }
+            catch (ArgumentException) { return FunnyNone.Instance; }
         }
     }
+
 }

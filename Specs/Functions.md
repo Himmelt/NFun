@@ -2,136 +2,269 @@
 
 Most functions may be applied for different types of operands. To simplify the description, we will give names to some sets of types:
 
-| Name          | Types                                                           | Formal constrains                                   |
-|---------------|-----------------------------------------------------------------|-----------------------------------------------------|
-| All           | All types                                                       | T => any                                            |
-| Integers      | `int64`, `int32`,`int16`,  `uint64`, `uint32`, `uint16`, `byte` | T => (int64 &#124; uint64)                          |
-| Numbers       | `real`, **[Integers]**                                          | T => real                                           |
-| Signed        | `int64`, `int32`, `int16`                                       | int16 => T => int64                                 |
-| Arithmetics   | `real`, `int64`, `int32`,         `uint64`, `uint32`            | (int32 &#124; uint32) => T => real                  | 
-| Comparables   | `text`, `char`, **[Numbers]**                                   | T is IComparable                                    |
+| Name          | Types                                                                    | Formal constrains                                   |
+|---------------|--------------------------------------------------------------------------|-----------------------------------------------------|
+| All           | All types                                                                | T => any                                            |
+| Integers      | `int64`, `int32`,`int16`, `int8`, `uint64`, `uint32`, `uint16`, `byte`   | T => (int64 &#124; uint64)                          |
+| Floats        | `float32`, `float64` (≡`real`)                                           | float32 => T => real                                |
+| Numbers       | **[Floats]**, **[Integers]**                                             | T => real                                           |
+| Signed        | `real`, `float32`, `int64`, `int32`, `int16`, `int8`                     | int8 => T => real                                   |
+| Arithmetics   | `real`, `float32`, `int64`, `int32`, `uint64`, `uint32`                  | (int32 &#124; uint32) => T => real                  |
+| Comparables   | `text`, `char`, **[Numbers]**                                            | T is IComparable                                    |
 
-## Concrete math functions
+## Built-in constants
 
-| Function              | Returns	                                                                     |
-|-----------------------|------------------------------------------------------------------------------|
-| sqrt(real):real       | the square root of a specified number                                        |
-| pow(real,b:real):real | a specified number raised to the specified power                             |
-| cos(real):real        | the cosine of the specified angle                                            |
-| sin(real):real        | the sine of the specified angle                                              |
-| tan(real):real        | the tangent of the specified angle                                           |
-| atan(real):real       | the angle whose tangent is the specified number                              |
-| atan2(real):real      | the angle whose tangent is the quotient of two specified numbers             |
-| asin(real):real       | the angle whose sine is the specified number                                 |
-| acos(real):real       | the angle whose cosine is the specified number	                              |
-| exp(real):real        | e raised to the specified power	                                             |
-| log(real):real        | the natural (base e) logarithm of a specified number                         |
-| log(real,real):real   | the logarithm of a specified number in a specified base.                     |
-| log10(real):real      | the base 10 logarithm of a specified number                                  |
-| avg(real[]):real      | Computed average of an array of real numbers. Throws if input array is empty |
+| Constant | Type | Value |
+|----------|------|-------|
+| `π`      | real | 3.14159265... |
+| `∞`      | real | positive infinity |
+
+## Math functions
+
+All math functions are **generic over Floats**: input and output share the same float
+type T ∈ {`float32`, `float64`} (with `float64 ≡ real`). Float32 backings use
+`System.MathF` (single-precision); float64/real backings use `System.Math` (double)
+or `System.Decimal` per `RealClrType` dialect.
+
+| Function              | Constrains | Returns	                                                                |
+|-----------------------|------------|------------------------------------------------------------------------------|
+| sqrt(T):T             | Floats     | the square root of a specified number                                        |
+| cos(T):T              | Floats     | the cosine of the specified angle                                            |
+| sin(T):T              | Floats     | the sine of the specified angle                                              |
+| tan(T):T              | Floats     | the tangent of the specified angle                                           |
+| atan(T):T             | Floats     | the angle whose tangent is the specified number                              |
+| atan2(y:T, x:T):T     | Floats     | the angle whose tangent is the quotient of two specified numbers             |
+| asin(T):T             | Floats     | the angle whose sine is the specified number                                 |
+| acos(T):T             | Floats     | the angle whose cosine is the specified number	                              |
+| exp(T):T              | Floats     | e raised to the specified power	                                             |
+| log(T):T              | Floats     | the natural (base e) logarithm of a specified number                         |
+| log(T,T):T            | Floats     | the logarithm of a specified number in a specified base.                     |
+| log10(T):T            | Floats     | the base 10 logarithm of a specified number                                  |
+| avg(T[]):T            | Floats     | Computed average of an array of floats. Throws if input array is empty       |
+| round(T,digits:int):T | Floats     | the value rounded to the specified number of digits                          |
+| ceil(T):T             | Floats     | the smallest integer greater than or equal to the argument. `ceil(7.03)` → `8.0` |
+| floor(T):T            | Floats     | the largest integer less than or equal to the argument. `floor(7.03)` → `7.0`    |
+| range(from:T, to:T):T[]    | Numbers | array of numbers from `from` to `to` inclusive. `range(1,3)` → `[1,2,3]`. Descending if from > to |
+| range(from:T, to:T, step:T):T[] | Numbers | array with step. `range(1,10,3)` → `[1,4,7,10]`                  |
 
 ## Generic functions
 | Function       | Constrains     | Returns	                                                                                                                                   |
 |----------------|----------------|--------------------------------------------------------------------------------------------------------------------------------------------|
 | abs(T):T       | Signed, `real` | the absolute value                                                                                                                         |
-| min(T,T):bool  | Comparables    | first or second argument, whichever is smaller. If any argument is equal to NaN (in case if T is real and real is double), NaN is returned |
-| max(T,T):bool  | Comparables    | first or second argument, whichever is bigger. If any argument is equal to NaN (in case if T is real and real is double), NaN is returned  |
-| convert(TA):TR | ----           | Converts argument of type TA to type TR if it is possible. For more information, see the conversion table                                  |
+| sign(T):int32  | Signed, `real` | -1 if negative, 0 if zero, +1 if positive. Always returns `int32`. NaN propagates per IEEE 754.                                            |
+| min(T,T):T     | Comparables    | first or second argument, whichever is smaller. If any argument is equal to NaN (in case if T is real and real is double), NaN is returned |
+| max(T,T):T     | Comparables    | first or second argument, whichever is bigger. If any argument is equal to NaN (in case if T is real and real is double), NaN is returned  |
+| convert(TA):TR | ----           | Converts an argument of type `TA` to type `TR`. See the conversion specification below.                                  |
 
-### Convertion tables for `convert` function
+### `convert` specification
 
-#### Useless converions
+Every conversion `convert(value):T` is classified into one of five **classes** by the pair (source type, target type). The class determines static and runtime behavior:
 
-| Argument type | Result Type                | Description                                                                  |
-|---------------|----------------------------|------------------------------------------------------------------------------|
-| All           | Same type as argument type | Do nothing. Returns argument                                                 |
-| All           | Argument type descendant   | Returns converted argument. Equals to `result:TR = argument`                 |
-| All           | `text`                     | Returns text representation of an argument. Equals to `toText` function call |
+| Class | Symbol | Static (compile time) | Runtime |
+|-------|--------|-----------------------|---------|
+| Implicit | **I** | accepted | no-op (already free via subtyping) |
+| Total    | **✓** | accepted | always succeeds |
+| Lossy    | **⚠** | accepted | always succeeds; data silently lost (truncation, precision) |
+| Soft     | **🪂** | accepted | `convert(x):T` throws `Oops` on failure; `convert(x):T?` returns `none` on the same failure |
+| None     | **✗** | **compile error** (`FU`); `:T?` does NOT rescue | — |
 
-#### Serialization (Result type is `byte[]`)
-| Argument type | Returns                                                                                 |
-|---------------|-----------------------------------------------------------------------------------------|
-| `Character`   | array with 2 element - [lo,hi] bytes of unicode representation                          |
-| `byte`        | array with single element (given argument)                                              |
-| `bool`        | array with single element wich is `1` if argument is `true`, `0` if argument is `false` |
-| Integers      | array with N elements from Little-endian encoding                                       |
-| `real`        | array with 4 elements from Little-endian double floating number encoding                |
-| `text`        | Encodes a set of characters from the specified text with Unicode encoding               |
-| `char`        | Encodes single characters with Unicode encoding                                         |
-| `ip`          | Encodes ip address as sequence of bytes                                                 |
+The `?` on a target type **only** affects 🪂 conversions: it replaces the runtime throw with `none`. It does not create morphisms, so ✗ conversions stay rejected even with `:T?`.
 
-#### Serialization (Result type is `byte[]`)
-Same as Serialization to `byte[]`, but returns bit array
+#### Primitive matrix
 
-#### Deserialization (Argument type is `byte[]`)
+Rows = source. Columns = target. (Aliases: `byte ≡ uint8`, `sbyte ≡ int8`, `int ≡ int32`, `uint ≡ uint32`, `real ≡ float64`, `text ≡ char[]`.)
 
-| Result type | Returns                                                                                                               |
-|-------------|-----------------------------------------------------------------------------------------------------------------------|
-| `Character` | if array size is 1, returns ascii decoded symbol. If array size is 2 returns Unicode encoded symbol. throws otherwise |
-| `bool`      | `false` if arguments first element is `0`, `true` if arguments first element is `1`                                   |
-| Integers    | Decodes integer number from litle endian array                                                                        |
-| `real`      | Decodes real double float number from litle endian array                                                              |
-| `text`      | Decodes input Unicode sequence of bytes into text                                                                     |
-| `char`      | Decodes single characters with Unicode encoding                                                                       |
-| `ip`        | Decodes ip address                                                                                                    |
+| from\to    | u8 | u16 | u32 | u64 | i8 | i16 | i32 | i64 | f32 | real | bool | char | text | ip |
+|------------|----|-----|-----|-----|----|-----|-----|-----|-----|------|------|------|------|----|
+| **u8**     | I  | I   | I   | I   | 🪂 | I   | I   | I   | I   | I    | ✓    | ✓    | ✓    | ✗  |
+| **u16**    | 🪂 | I   | I   | I   | 🪂 | 🪂  | I   | I   | I   | I    | ✓    | ✓    | ✓    | ✗  |
+| **u32**    | 🪂 | 🪂  | I   | I   | 🪂 | 🪂  | 🪂  | I   | ⚠   | I    | ✓    | 🪂   | ✓    | ✓  |
+| **u64**    | 🪂 | 🪂  | 🪂  | I   | 🪂 | 🪂  | 🪂  | 🪂  | ⚠   | ⚠    | ✓    | 🪂   | ✓    | 🪂 |
+| **i8**     | 🪂 | 🪂  | 🪂  | 🪂  | I  | I   | I   | I   | I   | I    | ✓    | 🪂   | ✓    | ✗  |
+| **i16**    | 🪂 | 🪂  | 🪂  | 🪂  | 🪂 | I   | I   | I   | I   | I    | ✓    | 🪂   | ✓    | ✗  |
+| **i32**    | 🪂 | 🪂  | 🪂  | 🪂  | 🪂 | 🪂  | I   | I   | ⚠   | I    | ✓    | 🪂   | ✓    | 🪂 |
+| **i64**    | 🪂 | 🪂  | 🪂  | 🪂  | 🪂 | 🪂  | 🪂  | I   | ⚠   | ⚠    | ✓    | 🪂   | ✓    | 🪂 |
+| **f32**    | ⚠🪂| ⚠🪂 | ⚠🪂 | ⚠🪂 | ⚠🪂| ⚠🪂 | ⚠🪂 | ⚠🪂 | I   | I    | ✓    | 🪂   | ✓    | ✗  |
+| **real**   | ⚠🪂| ⚠🪂 | ⚠🪂 | ⚠🪂 | ⚠🪂| ⚠🪂 | ⚠🪂 | ⚠🪂 | ⚠🪂 | I    | ✓    | 🪂   | ✓    | ✗  |
+| **bool**   | ✓  | ✓   | ✓   | ✓   | ✓  | ✓   | ✓   | ✓   | ✓   | ✓    | I    | ✗    | ✓    | ✗  |
+| **char**   | 🪂 | ✓   | ✓   | ✓   | 🪂 | 🪂  | ✓   | ✓   | ✓   | ✓    | ✗    | I    | ✓    | ✗  |
+| **text**   | 🪂 | 🪂  | 🪂  | 🪂  | 🪂 | 🪂  | 🪂  | 🪂  | 🪂  | 🪂   | 🪂   | 🪂   | I    | 🪂 |
+| **ip**     | ✗  | ✗   | ✓   | I   | ✗  | ✗   | **✗**| ✓  | ✗   | ✗    | ✗    | ✗    | ✓    | I  |
+| **any**    | 🪂 | 🪂  | 🪂  | 🪂  | 🪂 | 🪂  | 🪂  | 🪂  | 🪂  | 🪂   | 🪂   | 🪂   | ✓    | 🪂 |
 
-#### Parsing (Argument type is `text`)
+Reading the cells:
+- **Widening** within the numeric subtype lattice (`u8 ≤ u16 ≤ u32 ≤ u64`, `i8 ≤ i16 ≤ i32 ≤ i64`, `u8 ≤ i16 ≤ i32 ≤ i64`, `u16 ≤ i32 ≤ i64`, `u32 ≤ i64`, small ints `≤ f32`, `f32 ≤ real`) → **I**.
+- **Narrowing** → **🪂** (throws on overflow; `:T?` gives `none`).
+- **`f32 / real → integer`** → **⚠🪂** — fractional part silently truncated (`1.5 → 1`); throws/`none` on overflow.
+- **`u64 → real`, `i64 → real`, wide-int → f32**, **`real → f32`** → **⚠** — silent precision loss (f32 mantissa = 24 bits, real ≈ 53 bits).
+- **`bool ↔ numeric`** is **C-style**: `false ↔ 0`, `true ↔ 1` (back-direction); `int → bool`: `0 → false`, any non-zero → `true`. `real → bool`: `0.0/±0.0/NaN → false`, finite non-zero → `true`. All total.
+- **`char ↔ numeric`**: `char` is a UTF-16 code unit. `char → u16+/i32+/real` is **✓**; `char → u8/i8/i16` is **🪂** (overflow). `u8/u16 → char` is **✓** (every u8/u16 is a valid code unit, including surrogates). Wider integer or signed → `char` is **🪂**.
+- **`bool ↔ char`** → **✗** (no canonical mapping).
+- **`X → text`** is **✓** universally (equivalent to `toText(X)`).
+- **`text → X`** (X ≠ text) is **🪂** (parse; `int.Parse(invariant)`, `bool` accepts `"true"`/`"false"`/`"1"`/`"0"` case-insensitive, `ip` via `IPAddress.Parse`, `char` only if `len == 1`).
+- **`ip ↔ integer`**: only into types preserving the non-negative natural representation. `ip → u32` ✓ (exact), `ip → u64/i64` ✓/I (widening), **`ip → i32` ✗** (compile error — would produce negative for high IPs; use `:uint` or `:long`). `ip → u8/u16/i16/real` ✗. Reverse: `u32 → ip` ✓, `u64/i32/i64 → ip` 🪂 (must fit `[0, 2³²-1]`), narrower or non-integer → ✗.
+- **`X → any`** is **I**; **`any → X`** (X ≠ text, ≠ any) is **🪂** (runtime tag dispatch).
 
-| Result type | Returns                                                                                             |
-|-------------|-----------------------------------------------------------------------------------------------------|
-| `bool`      | `true` if text equals 'true' or '1', `false` if text equals 'false' or '0'. Raises `Oops` otherwise |
-| Integers    | Parse integer number. Raises `Oops` otherwise if it is impossible                                   |
-| `real`      | Parse real number with invarant culture. Raises `Oops` otherwise if it is impossible                |
-| `ip`        | Parse Ip. Raises `Oops` otherwise if it is impossible                                               |
+#### Composite rules
+
+| Pair | Class |
+|---|---|
+| `T → T` (same type) | **I** |
+| `T → any` | **I** |
+| `T → text` | **✓** (= `toText(T)`) |
+| `T[] → U[]` | class of `T → U`, lifted element-wise. For 🪂: `:U[]` throws on first failing element, `:U?[]` returns `[some/none/...]`. |
+| `S{f₁:A₁, …} → T{f₁:B₁, …, fₙ:Bₙ}` | each target field `fᵢ` must exist on source; class is the worst (per ordering ✗ > 🪂 > ⚠ > ✓ > I) of `class(Aᵢ → Bᵢ)` |
+| Target field missing on source | **✗** |
+| `struct ↔ primitive`, `primitive ↔ struct` | **✗** |
+| `opt(A) → opt(B)` | class of `A → B` (applied through wrapper, `none` preserved) |
+| `opt(A) → B` (non-opt target) | **🪂** (throws/none if source is `none`) |
+| `A → opt(B)` | class of `A → B`, result lifted into `opt` |
+| `opt(A) → text/any` | inherits `✓` / `I` |
+| `opt(A) → byte[]` | **✗** (no canonical byte representation for `none`) |
+
+#### Serialization (`X → byte[]` and `byte[] → X`)
+
+`byte[]` is treated as a target/source like any other composite — classes apply per the matrix:
+
+| Pair | Class | Encoding |
+|---|---|---|
+| `text → byte[]` | **✓** | UTF-16 LE |
+| `byte[] → text` | **✓** | UTF-16 LE decode (invalid bytes → replacement char) |
+| numeric → `byte[]` | **✓** | little-endian, native width (u8=1, u16=2, u32=4, u64=8, i16=2, i32=4, i64=8, real=8) |
+| `byte[] → numeric` | **🪂** | requires exact length match for the target width |
+| `bool → byte[]` | **✓** | `[1]` / `[0]` |
+| `byte[] → bool` | **🪂** | length 1, value 0 or 1 |
+| `char → byte[]` | **✓** | 2 bytes UTF-16 LE |
+| `byte[] → char` | **🪂** | length 1 (ASCII) or 2 (UTF-16) |
+| `ip → byte[]` | **✓** | 4 bytes network order |
+| `byte[] → ip` | **🪂** | length 4 |
+| `T[] → byte[]` (non-byte T) | **✗** | use `arr.flat(map(...))` |
+| `struct/opt → byte[]` | **✗** | use `toJson` or similar |
+
+Conversion to bit array `bool[]` follows the same matrix as `byte[]` with bytes split into bits.
+
+#### Failure mode summary
+
+```
+convert(x):T          — runtime: throws Oops on 🪂 failure; compile error on ✗
+convert(x):T?         — runtime: returns none on 🪂 failure; compile error on ✗
+convert(x:opt(S)):T   — runtime: throws on none; compile error on ✗
+convert(x:opt(S)):T?  — runtime: none stays none; compile error on ✗
+convert(x!):T         — force-unwrap source first; then per (S, T) class
+```
+
+#### Implementation status
+
+The matrix above is the **specified** behavior. The current runtime implements
+all primitive ↔ primitive cells, plus `opt(A)` source/target propagation,
+`any → T` runtime tag dispatch, and `byte[]` (de)serialization (strict-length).
+
+**Not yet implemented** — falls back to a compile-time `FU887` reject:
+
+| Pair | Status |
+|---|---|
+| `T[] → U[]` element-wise when neither `T` nor `U` is `byte`/`bool` | deferred (e.g. `text[] → int[]`) |
+| `S{...} → T{...}` width-subtyping field-wise convert via `convert()` | deferred (assignment-level width subtyping at `:T = ...` boundary IS supported per `Specs/Types.md` §Type casting) |
+
+Width subtyping at assignment (`b:{x:int} = {x=1,y=2}`) is unaffected — it
+goes through the type-inference path, not `convert()`. Only the explicit
+`convert(value):T[]` / `convert(value):T{...}` forms are pending. The
+implementation gap is tracked in test cases marked
+`[Ignore("convert-deferred: complex composite conversions")]`.
+
+### Numeric narrowing family: `toXxx` / `toXxxWrap` / `toXxxClamp`
+
+Explicit numeric conversions with the failure semantics **in the name** — they do
+not depend on the `IntegerOverflow` dialect flag. This is the sanctioned way to
+narrow the result of arithmetic (which always computes in a wide type):
+`counter:byte = (counter + 1).toByte()`.
+
+| Variant | Out of target range | `real` source | `NaN` | `±Inf` |
+|---|---|---|---|---|
+| `toXxx(x:number):XXX` | runtime error | truncate toward zero, **then** range-check (`(-0.5).toByte() == 0`) | error | error |
+| `toXxxWrap(x:number):XXX` | two's-complement wrap mod 2ⁿ | truncate toward zero, then wrap; error if the truncated value has no 64-bit representation | error | error |
+| `toXxxClamp(x:number):XXX` | saturate to `[XXX.min .. XXX.max]` | clamp first, then truncate | error | `+Inf → max`, `-Inf → min` |
+
+Targets — all fixed-width integer types. Function names mirror the language's
+type-keyword aliases:
+
+| Primary | Aliases |
+|---|---|
+| `toByte` | `toUint8` |
+| `toUint16` | — |
+| `toUint` | `toUint32` |
+| `toUint64` | — |
+| `toInt8` | — |
+| `toInt16` | — |
+| `toInt` | `toInt32` |
+| `toInt64` | — |
+
+Each name exists in all three variants (`toByte`, `toByteWrap`, `toByteClamp`, …).
+
+Additionally:
+
+- `toReal(x:number):real` — total for numeric sources (precision loss possible
+  above 2⁵³); no `Wrap`/`Clamp` variants exist. Under the decimal dialect returns
+  decimal-backed `real`.
+- `toFloat32(x:number):float32` and `toFloat64(x:number):real` (alias of `toReal`)
+  exist **only** in the float-family dialect (`FloatFamilySupport.Float32AndFloat64`);
+  no `Wrap`/`Clamp` variants: `toFloat32` overflow produces `±Inf` (IEEE), while
+  `toReal`/`toFloat64` cannot overflow from any NFun source.
+
+The checked variant shares numeric semantics with `convert()` (same
+truncate-toward-zero rule); the difference is ergonomic: the target type is fixed
+by the function name instead of demanded by the assignment context, so the family
+chains inside expressions. In `convert` vocabulary terms: checked `toXxx` failures
+are **🪂**-class (runtime `Oops`), non-numeric sources are **✗** (compile-time reject).
+Identity conversions (`x:byte` → `x.toByte()`) always succeed.
 
 ## Generic Array Functions
 
 ### Appliable to any arrays (without type constrains)
 | Function                           | Returns	                                                                                                                                                                 |
 |------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| first(T[]):T                       | first element of array. Throws if array is empty                                                                                                                         |
-| last(T[]):T                        | last element of array. Throws if array is empty                                                                                                                          |
+| first(arr:T[]):T                   | first element of array. Throws if array is empty                                                                                                                         |
+| last(arr:T[]):T                    | last element of array. Throws if array is empty                                                                                                                          |
+| set(arr:T[],index:int,value:T):T[] | copy of array with element at index replaced                                                                                                                             |
 | count(T[]):int                     | array size                                                                                                                                                               |
-| count(T[], rule(T):bool):int       | the number of array elements for which the rule is satisfied                                                                                                             |
+| count(T[], rule(T)->bool):int       | the number of array elements for which the rule is satisfied                                                                                                             |
 | find(T[], T):int                   | index of the first element equal to the specified, -1 if no such element found                                                                                           |
 | chunk(T[],n:int):T[][]             | Chunks (splits) the array into many smaller arrays with size of n. Last array may have size less than n. Throws if n is non positive                                     |
 | flat(T[][]):T[]                    | Array with sequential enumeration of elements of all specified subarays                                                                                                  |
-| fold(T[],rule(T,T):T):T            | Applies an accumulator rule over an array. Throws if given array is empty                                                                                                |
-| fold(T[],seed:TR,rule(TR,T):TR):TR | Applies an accumulator rule over an array. The specified seed value is used as the initial accumulator value, and the specified rule is used to select the result value. |
+| fold(T[],rule(T,T)->T):T            | Applies an accumulator rule over an array. Throws if given array is empty                                                                                                |
+| fold(T[],seed:TR,rule(TR,T)->TR):TR | Applies an accumulator rule over an array. The specified seed value is used as the initial accumulator value, and the specified rule is used to select the result value. |
 | unite(T[],T[]):T[]                 | the set union of two arrays                                                                                                                                              |
 | unique(T[],T[]):T[]                | array of elements that are contained in only one of the arrays                                                                                                           |
 | intersect(T[],T[]):T[]             | array of elements that are contained in both arrays                                                                                                                      |
 | concat(T[],T[]):T[]                | concatenation of two arrays                                                                                                                                              |
 | append(T[],T):T[]                  | array of elements from given array and specified element in the tail of resulting array                                                                                  |
 | except(T[],T[]):T[]                | array of elements that are contained in first array and not contained in second                                                                                          |
-| map(T[],rule(T):TR):TR[]           | Projects each element of a given into a new form by given rule                                                                                                           |
-| any(T[],rule(T):bool):bool         | `true` if the specified rule is satisfied at least for single element of given array. `false` if it is not, or array is empty                                            |
-| all(T[],rule(T):bool):bool         | `true` if the specified rule is satisfied for all elements of given array. `false` if it is not, or array is empty                                                       |
-| filter(T[],rule(T):bool):T[]       | an array consisting of elements of the original array for which the rule is satisfied                                                                                    |
-| repeat( T,n:int):T[]               | an array in which the specified element is repeated n times                                                                                                              |
+| map(T[],rule(T)->TR):TR[]           | Projects each element of a given into a new form by given rule                                                                                                           |
+| any(T[]):bool                      | `true` if the array is non-empty                                                                                                                                         |
+| any(T[],rule(T)->bool):bool         | `true` if the specified rule is satisfied at least for single element of given array. `false` if it is not, or array is empty                                            |
+| all(T[],rule(T)->bool):bool         | `true` if the specified rule is satisfied for all elements of given array. `true` if array is empty (vacuous truth)                                                      |
+| filter(T[],rule(T)->bool):T[]       | an array consisting of elements of the original array for which the rule is satisfied                                                                                    |
+| repeat(element:T,count:int):T[]    | an array in which the specified element is repeated n times. Throws if count is negative                                                                                 |
 | reverse(T[]):T[]                   | reversed array                                                                                                                                                           |
 | take(T[],n:int):T[]                | takes first n elements of given array. Equals to `[:n]` operator call                                                                                                    |
 | skip(T[],n:int):T[]                | array, where first n elements of given array are skipped. Equals to `[n:]` operator call                                                                                 |
 
 | Function                          | Constrains                 | Returns	                                                                                          |
 |-----------------------------------|----------------------------|---------------------------------------------------------------------------------------------------|
-| sum(T[], rule(T):TR):TR           | Arithmetics                | the sum of all the elements of the array                                                          |
-| max(T[]):T                        | Comparables                | the maximum element in array                                                                      |
-| min(T[]):T                        | Comparables                | the minimum element in array                                                                      |
-| median(T[]):T                     | Comparables                | median element                                                                                    |
+| sum(T[]):T                        | Arithmetics                | the sum of all the elements of the array                                                          |
+| sum(T[], rule(T)->TR):TR           | Arithmetics                | the sum of transformed elements                                                                   |
+| max(T[]):T                        | Comparables                | the maximum element in array. Throws if array is empty                                            |
+| min(T[]):T                        | Comparables                | the minimum element in array. Throws if array is empty                                            |
+| median(T[]):T                     | Comparables                | median element. Throws if array is empty                                                          |
 | sort(T[]):T[]                     | Comparables                | sorted array                                                                                      |
 | sortDescending(T[]):T[]           | Comparables                | sorted array in reverse order                                                                     |
-| sort(T[],rule(T):R):T[]           | T is All, R is Comparables | sorted array, where the element being compared is obtained by the specified rule                  |
-| sortDescending(T[],rule(T):R):T[] | T is All, R is Comparables | Sorted array in reverse order, where the element being compared is obtained by the specified rule |
+| sort(T[],rule(T)->R):T[]           | T is All, R is Comparables | sorted array, where the element being compared is obtained by the specified rule                  |
+| sortDescending(T[],rule(T)->R):T[] | T is All, R is Comparables | Sorted array in reverse order, where the element being compared is obtained by the specified rule |
 
 ## Text Functions
 | Function                          | Returns	                                                                                                                |
 |-----------------------------------|-------------------------------------------------------------------------------------------------------------------------|
 | toText(any):text                  | text presentation of given value                                                                                        |
-| concat(any[]):text                | concatenation of text representations of given values                                                                   |
-| concat(any,any):text              | concatenation of text representations of given values                                                                   |
-| concat(any,any,any):text          | concatenation of text representations of given values                                                                   |
-| format(text,any[]):text           | replaces the format item in a specified text with the text representation of a corresponding value in a specified array |
 | trim(text):text                   | removes all leading and trailing white-space characters from the current text                                           |
 | trimStart(text):text              | removes all the leading white-space characters from the current text                                                    |
 | trimEnd(text):text                | removes all the trailing white-space characters from the current string                                                 |
@@ -139,3 +272,23 @@ Same as Serialization to `byte[]`, but returns bit array
 | toLower(text):text                | a copy of this string converted to lowercase                                                                            |
 | split(text,separator:text):text[] | splits a text into subtexts that are based on the provided text separator. Empty entries are removed                    |
 | join(any[],separator:text):text   | concatenation of text representations of an value array, using the specified separator between each element.            |
+
+## Error Functions
+
+| Function | Returns |
+|----------|---------|
+| oops():T | Throws `FunnyRuntimeException("oops")`. Return type is generic — can be used in any context. |
+| oops(text):T | Throws `FunnyRuntimeException` with the given message. |
+| oops(text, any):T | Throws `FunnyRuntimeException` with message and data payload. |
+
+## Formatting Functions
+
+| Function | Returns |
+|----------|---------|
+| toNumText(real, decimals:int=2, minDigits:int=0, thousands:bool=false, forceZeros:bool=true):text | formatted number. `toNumText(3.14, decimals=4)` → `'3.1416'` |
+| toHexText(int64):text | hexadecimal representation. `toHexText(255)` → `'FF'` |
+| toBinText(int64):text | binary representation. `toBinText(42)` → `'101010'` |
+| toSciText(real, uppercase:bool=true):text | scientific notation. `toSciText(3.14)` → `'3.140000E+000'` |
+| padLeftText(text, width:int):text | pads with spaces on the left. `padLeftText('hi', 10)` → `'        hi'` |
+| padRightText(text, width:int):text | pads with spaces on the right. `padRightText('hi', 10)` → `'hi        '` |
+| padCenterText(text, width:int):text | pads with spaces on both sides. `padCenterText('hi', 10)` → `'    hi    '` |

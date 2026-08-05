@@ -1,0 +1,86 @@
+namespace NFun.UnitTests.TicTests.StateExtensions;
+
+using Tic;
+using NFun.Tic.SolvingStates;
+using NUnit.Framework;
+using static Tic.SolvingStates.StatePrimitive;
+using static LcaTestTools;
+using static SolvingStates;
+
+public class LcaArraysTest {
+
+    // None joins through the Optional axis: LCA(None, arr) = opt(arr), not Any
+    [Test]
+    public void PrimitiveAndArrayOfBottoms_ReturnsAny() {
+        foreach (var primitive in PrimitiveTypes)
+        {
+            var arr = Array(EmptyConstraints);
+            AssertLca(arr, primitive, primitive.Equals(None) ? Optional(arr) : Any);
+        }
+    }
+
+    [Test]
+    public void PrimitiveAndArrayOfComposite_ReturnsAny() {
+        foreach (var primitive in PrimitiveTypes)
+        {
+            var arr = Array(Array(EmptyConstraints));
+            AssertLca(arr, primitive, primitive.Equals(None) ? Optional(arr) : Any);
+        }
+    }
+
+    [Test]
+    public void PrimitiveAndArrayOfPrimitive_ReturnsAny() {
+        foreach (var primitive in PrimitiveTypes)
+        {
+            var arr = Array(Any);
+            AssertLca(arr, primitive, primitive.Equals(None) ? Optional(arr) : Any);
+        }
+    }
+
+    [Test]
+    public void ArrayOfPrimitiveTypes_ReturnsArrayOfLca() {
+        foreach (var types in PrimitiveTypesLca)
+            AssertLca(
+                Array(types.Left),
+                Array(types.Right),
+                Array(types.Lca));
+    }
+
+    [Test]
+    public void ArrayOfPrimitiveTypeAndArrayOfConstrainType_ReturnsArrayOfLca() {
+        foreach (var types in PrimitiveTypesLca)
+            AssertLca(
+                Array(types.Left),
+                Array(EmptyConstraints),
+                Array(types.Left));
+    }
+
+
+    [Test]
+    public void ArrayOfPrimitiveTypeAndArrayOfConstrainTypeWithDesc_ReturnsArrayOfLca() {
+        foreach (var types in PrimitiveTypesLca)
+            AssertLca(
+                Array(types.Left),
+                Array(Constrains(desc: types.Right)),
+                Array(types.Lca));
+    }
+
+    [Test]
+    public void ComplexNestedArray() {
+        foreach (var types in PrimitiveTypesLca)
+        {
+            var array1 = Array(Ref(Array(Constrains(desc: types.Left))));
+            var array2 = Array(Array(types.Right));
+
+            AssertLca(array1, array2, Array(Array(types.Lca)));
+        }
+    }
+
+    [Test]
+    public void Struct1() =>
+        AssertLca(
+            Struct("age", Real),
+            Struct(false, ("age", Constrains(U8, Real))),
+            Struct("age", Real));
+
+}

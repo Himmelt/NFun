@@ -90,7 +90,7 @@ internal abstract class CalculatorBase<TInput, TOutput> : ICalculator<TInput, TO
 internal class Calculator<TInput> : CalculatorBase<TInput, object> {
 
     public Calculator(FunnyCalculatorBuilder builder):base(builder) {
-        InputsMap = MutableApriori.AddAprioriInputs<TInput>(Dialects.Origin.Converter);
+        InputsMap = MutableApriori.AddAprioriInputs<TInput>(Builder.ConverterWithCustomTypes);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -106,7 +106,7 @@ internal class NonGenericCalculator<TOutput> : CalculatorBase<object, TOutput> {
     public NonGenericCalculator (FunnyCalculatorBuilder builder, Type inputType):base(builder) {
         FluentApiTools.ThrowIfInvalidDecimalDialectSettings<TOutput>(builder);
 
-        InputsMap = MutableApriori.AddAprioriTypeInputs(inputType, Dialects.Origin.Converter);
+        InputsMap = MutableApriori.AddAprioriTypeInputs(inputType, Builder.ConverterWithCustomTypes);
         _outputConverter = Builder.Dialect.Converter.GetOutputConverterFor(typeof(TOutput));
         if(_outputConverter.FunnyType!=FunnyType.Any)
             MutableApriori.Add(Parser.AnonymousEquationId, _outputConverter.FunnyType);
@@ -123,7 +123,7 @@ internal class NonGenericCalculator<TOutput> : CalculatorBase<object, TOutput> {
 
 internal class NonGenericCalculator : CalculatorBase<object, object> {
     public NonGenericCalculator (FunnyCalculatorBuilder builder, Type inputType):base(builder) {
-        InputsMap = MutableApriori.AddAprioriTypeInputs(inputType, Dialects.Origin.Converter);
+        InputsMap = MutableApriori.AddAprioriTypeInputs(inputType, Builder.ConverterWithCustomTypes);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -140,7 +140,7 @@ internal class Calculator<TInput, TOutput> : CalculatorBase<TInput, TOutput> {
     public Calculator(FunnyCalculatorBuilder builder):base(builder) {
         FluentApiTools.ThrowIfInvalidDecimalDialectSettings<TOutput>(builder);
 
-        InputsMap = MutableApriori.AddAprioriInputs<TInput>(Dialects.Origin.Converter);
+        InputsMap = MutableApriori.AddAprioriInputs<TInput>(Builder.ConverterWithCustomTypes);
         _outputConverter = Builder.Dialect.Converter.GetOutputConverterFor(typeof(TOutput));
         if (_outputConverter.FunnyType != FunnyType.Any)
             MutableApriori.Add(Parser.AnonymousEquationId, _outputConverter.FunnyType);
@@ -279,7 +279,7 @@ internal class ConstantCalculator<TOutput> : IConstantCalculator<TOutput> {
         var runtime = _builder.CreateRuntime(expression, _mutableApriori);
         FluentApiTools.ThrowIfHasInputs(runtime);
         FluentApiTools.ThrowIfHasNoDefaultOutput(runtime);
-        // If there is no inputs, - it is thread safe. TODO - What about non pure functions?
+        // No inputs → immutable state → thread safe (pure functions only)
         runtime.Run();
         return (TOutput)_outputConverter.ToClrObject(FluentApiTools.GetFunnyOut(runtime).FunnyValue);
     }
@@ -299,7 +299,7 @@ internal class ManyConstantsCalculator<TOutput> : IConstantCalculator<TOutput> w
     public TOutput Calc(string expression) {
         var runtime = _builder.CreateRuntime(expression, _mutableApriori);
         FluentApiTools.ThrowIfHasInputs(runtime);
-        // If there is no inputs, - it is thread safe. TODO - What about non pure functions?
+        // No inputs → immutable state → thread safe (pure functions only)
         runtime.Run();
         return FluentApiTools.CreateOutputModelFromResults<TOutput>(runtime, _outputsMap);
     }
@@ -314,7 +314,7 @@ internal class ConstantCalculator : IConstantCalculator<object> {
         var runtime = _builder.CreateRuntime(expression, EmptyAprioriTypesMap.Instance);
         FluentApiTools.ThrowIfHasInputs(runtime);
         FluentApiTools.ThrowIfHasNoDefaultOutput(runtime);
-        // If there is no inputs, - it is thread safe. TODO - What about non pure functions?
+        // No inputs → immutable state → thread safe (pure functions only)
         runtime.Run();
 
         return FluentApiTools.GetFunnyOut(runtime).Value;

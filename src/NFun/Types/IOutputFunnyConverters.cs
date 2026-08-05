@@ -24,6 +24,7 @@ public class DynamicTypeOutputFunnyConverter : IOutputFunnyConverter {
 
     public object ToClrObject(object funObject) =>
         funObject switch {
+            FunnyNone       => null,
             TextFunnyArray txt => txt.ToString(),
             IFunnyArray funArray =>
                 _behaviour
@@ -164,6 +165,43 @@ public class StructToDictionaryOutputFunnyConverter : IOutputFunnyConverter {
 
         return result;
     }
+}
+
+public class OptionalOutputFunnyConverter : IOutputFunnyConverter {
+    private readonly IOutputFunnyConverter _elementConverter;
+
+    public OptionalOutputFunnyConverter(IOutputFunnyConverter elementConverter) {
+        _elementConverter = elementConverter;
+        FunnyType = FunnyType.OptionalOf(elementConverter.FunnyType);
+        // Value types (int, bool, etc.) can't represent null — use Nullable<T>
+        // This ensures arrays like int?[] become Nullable<int>[] which can hold null for FunnyNone
+        ClrType = elementConverter.ClrType.IsValueType
+            ? typeof(Nullable<>).MakeGenericType(elementConverter.ClrType)
+            : elementConverter.ClrType;
+    }
+
+    public Type ClrType { get; }
+    public FunnyType FunnyType { get; }
+
+    public object ToClrObject(object funObject) =>
+        funObject is FunnyNone ? null : _elementConverter.ToClrObject(funObject);
+}
+
+public class NoneOutputFunnyConverter : IOutputFunnyConverter {
+    public Type ClrType { get; } = typeof(object);
+    public FunnyType FunnyType => FunnyType.None;
+    public object ToClrObject(object funObject) => null;
+}
+
+/// <summary>
+/// Output converter for function-typed variables.
+/// Function values are IConcreteFunction at runtime — pass through as-is.
+/// </summary>
+public class FunOutputFunnyConverter : IOutputFunnyConverter {
+    public FunOutputFunnyConverter(FunnyType funnyType) => FunnyType = funnyType;
+    public Type ClrType { get; } = typeof(object);
+    public FunnyType FunnyType { get; }
+    public object ToClrObject(object funObject) => funObject;
 }
 
 public class DynamicStructToDictionaryOutputFunnyConverter : IOutputFunnyConverter {

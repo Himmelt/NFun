@@ -15,25 +15,39 @@ Type identifier is the type name used in the code
 An example of such an identifier would be `bool` for boolean type, `text` for an array of characters (string), etc
 Some types have multiple identifiers like `byte` and `uint8` for a byte, and `int32` and `int` for a 32-bit integer
 
-Some types do not have an identifier at all. It is true for `rule` and `struct`
-
-
 ## Primitive types
 
 | Name            | Identifier      | Description                                                                                              | Example                            |
 |-----------------|-----------------|----------------------------------------------------------------------------------------------------------|------------------------------------|
 | Any             | `any`           | Any value                                                                                                | `y:any = if(true) 12 else 'test' ` |
 | Boolean         | `bool`          | Discrete value                                                                                           | `y:bool = true or false `          |
-| Character       | `char`          | Symbol. Cannot be set explicitly                                                                         | `y:char = 'text'[0]`               |
+| Character       | `char`          | Symbol. Can be set with char literal `/'x'`                                                              | `y = /'a'`                          |
 | Byte            | `uint8` `byte`  | Integer value [0..255]                                                                                   | `y:byte = 123; z:uint8 = 0xFF`     |
 | Unsigned int 16 | `uint16`        | Integer value [0..65535]                                                                                 | `y:uint16 = 123 `                  |
 | Unsigned int 32 | `uint32` `uint` | Integer value [0..4294967295]                                                                            | `y:uint32 = 123 `                  |
 | Unsigned int 64 | `uint64`        | Integer value [0..18446744073709551615]                                                                  | `y:uint64 = 123 `                  |
+| Signed int 8    | `int8` `sbyte`  | Integer value [-128..127]                                                                                | `y:int8 = -42; z:sbyte = 0x7F`     |
 | Signed int 16   | `int16`         | Integer value [-32768..32767]                                                                            | `y:int16 = 123 `                   |
 | Signed int 32   | `int32` `int`   | Integer value [-2147483648..2147483647]                                                                  | `y:int32 = 123 `                   |
-| Signed int 64   | `int64`         | Integer value [-140737488355328..140737488355327]                                                        | `y:int64 = 123 `                   |
-| Natural value   | `real`          | Non-integer numeric value . Depending on the settings, it can be either a double or a decimal clr number | `y:real = 123.5 `                  |
+| Signed int 64   | `int64`         | Integer value [-9223372036854775808..9223372036854775807]                                                | `y:int64 = 123 `                   |
+| Float 32        | `float32`       | IEEE 754 single-precision (~7 digits). Requires dialect `FloatFamilySupport.Float32AndFloat64` (opt-in — default is `AccordingToRealBehaviour`, in which case the `float32`/`float64` keywords are parse errors and floating point follows the `real` type).| `y:float32 = 3.14`                 |
+| Float 64 / Real | `float64` `real`| IEEE 754 double-precision (~15 digits) **or** decimal per dialect `RealClrType`. `real ≡ float64`. `float64` keyword requires `FloatFamilySupport.Float32AndFloat64`; `real` is always available.| `y:real = 123.5; z:float64 = 2.5`  |
 | Ip Address      | `ip`            | Ip v4 address                                                                                            | `y:ip = 192.168.0.1 `              |
+
+## Optional type `T?`
+
+Any type can be made optional by appending `?` to its identifier. An optional type `T?` can hold either a value of type `T` or the special value `none` (absence of a value)
+
+```py
+x:int? = 42
+y:int? = none
+```
+
+Optional types are covariant: `A?` is convertable to `B?` if `A` is convertable to `B`
+
+A non-optional value `T` is implicitly convertable to `T?` (implicit lift). The reverse is not true — `T?` cannot be implicitly converted to `T`
+
+You can read more about optional types in the boring **Optionals** section
 
 ## Generalized types
 
@@ -52,28 +66,30 @@ You can read more about arrays in the boring **Arrays** section
 
 The `text` is an alias for an array of characters, but the comparison operator is allowed on the `text` type
 
-## Functional type rule
+## Function type `rule`
 
-A higher-order function, i.e. an anonymous function created via rule-syntax is an expression with the type of `rule`
 ```
-rule(T1,T2...TN)->TR
+rule(T1, T2, ...TN)->TR
 ```
 
-Here T1..Tn - types of the 1st..Nth elements. `Tr` is the return type of the function
+Function type with argument types `T1..TN` and return type `TR`. Used for higher-order function parameters:
 
-The types of function arguments are covariant,
-that means: `rule(Ta)->TR` is converted to `rule(Tb)->TR` if `Ta` is converted to `Tb`
+```py
+apply(f:rule(int)->int, x:int)->int = f(x)
+y = apply(rule it*2, 21)   # 42
+```
 
-The return type of the function is contravariant
-, that is, `rule(T)->Ta` is converted to `rule(T)->Tb` if `Tb` is converted to `Ta`
+Postfix `?` and `[]` apply to the return type: `rule(int)->int?` = function returning `int?`
+
+Argument types are **contravariant**, return type is **covariant**
 
 ## Struct type struct
 
 The struct type describes a set of named fields
 
-The field types are invariant, which means that `{name:Ta}` is convertable to `{name:Tb}` only if `Ta` is `Tb`
+The field types are covariant, which means that `{name:Ta}` is convertable to `{name:Tb}` if `Ta` is convertable to `Tb`
 
-The set of fields of the structure is being expanded. This means that struct A is convertible to struct B if A contains all the fields of structure B (with the same names and types)
+The set of fields of the structure is being expanded. This means that struct A is convertible to struct B if A contains all the fields of structure B (with compatible types)
 At the same time, structure A can contain any number of additional fields.
 
 ## Type casting
@@ -93,12 +109,14 @@ c:any = b # real is converable to any
 - Array A is convertable to array B if the types of their elements are convertable
 - Function rule  A is convertable to function rule B if
   - number of function arguments are equal
-  - each type of argument A is convertible to the appropriate argument of B
-  - the return type of B is convertable to the return type of A
+  - each type of argument **B** is convertible to the appropriate argument of **A** (contravariant)
+  - the return type of **A** is convertable to the return type of **B** (covariant)
 - struct A  is convertible to struct B if A contains all the fields of the structure B (with the same names and types)
 - All numeric types are convertible to the real type
 - Unsigned integer types of low bitness are convertable to any integer types of higher bitness
 - Signed integer types of low bitness are reduced to Signed integer types of higher bitness
+- Non-optional type `T` is convertable to optional type `T?` (implicit lift)
+- Optional `A?` is convertable to optional `B?` if `A` is convertable to `B`
 
 
 This knowledge can be displayed on the following graph
@@ -108,6 +126,7 @@ any
  |<--array
  |<--rule
  |<--struct
+ |<--optional (T → T?)
  |
  |<--char
  |<--bool

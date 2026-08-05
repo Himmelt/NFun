@@ -17,12 +17,12 @@ x = i + 1 # 'i' is the input
 Expression is a description of calculating a value of some type. Numbers, text, formulas, and function calls are all particular cases of expressions
 
 ```py
-2*(i-12).toText() # expression with type of text
+(i-12).toText() # expression with type of text
 ```
 
 Initialization of the variable (output) - assigning the value of the expression to the output
 ```py
-x = 2*(3-1).toText() #value '4' type 'text' is assigned to the output 'x'
+x = (2*(3-1)).toText() #value '4' type 'text' is assigned to the output 'x'
 ```
 Type declaration - explicit indication of the type of the variable
 ```py
@@ -32,6 +32,12 @@ x:text = i.toText() # type declaration for x output combined with its initializa
 User function - the function described in the script
 ```py
 myFunc(a,b) = 2*a+b #example of a custom function
+```
+User functions can have default parameter values:
+```py
+greet(name:text, greeting:text = 'Hello') = '{greeting} {name}'
+y = greet('Alice')               # 'Hello Alice'
+z = greet('Bob', 'Hi')           # 'Hi Bob'
 ```
 
 # Nfun script
@@ -87,11 +93,19 @@ At the same time, it is guaranteed that there is no hidden, changing state betwe
 
 # Variables
 
-Variable names consist of uppercase and lowercase latin letters, numbers, and the _ symbol. The first character must be a latin letter
+Variable names can contain Unicode letters, digits, emoji, and the `_` symbol.
+The first character must be a Unicode letter, emoji, or `_` (not a digit).
 
-For example: `x`, `my_Name`, `id32`
+For example: `x`, `my_Name`, `id32`, `сумма`, `数量`, `größe`, `α`, `★`, `🎉`, `player_⭐`
 
-Nfun is case sensitive for variables, but you cannot create two variables whose names differ only by case
+The identifier rules are:
+- **Start character**: Unicode categories `Lu`, `Ll`, `Lt`, `Lm`, `Lo` (letters), `Nl` (letter numbers), `So` (symbols, including emoji), or `_`
+- **Continuation character**: all of the above, plus `Mn` (nonspacing marks), `Mc` (combining marks), `Nd` (decimal digits), `Pc` (connector punctuation)
+- **Excluded**: currency symbols (`$`, `€`), math symbols (`+`, `=`), punctuation, control characters, format characters (zero-width joiners)
+- **Surrogate pairs**: emoji above U+FFFF (like `🎉`, `🚀`) are supported
+- **No normalization**: code points are compared as-is (`é` as U+00E9 and `e` + U+0301 are different identifiers)
+
+Nfun is case insensitive for variables, but you cannot create two variables whose names differ only by case
 
 ```py
 x = 123
@@ -184,11 +198,11 @@ y = 1+2 # this is also a comment
 An expression is a description of calculating a value of some type.
 
 An expression is anything from
-- literal (discrete, ip, numeric, or textual)
+- literal (discrete, ip, numeric, character, textual, or `none`)
 - variable
-- template text
+- template text — `'hello {name}'`
 - function call
-- application of the operator (`[]`, `*`, `+`, `()`, `.`, `and`, `or`, `>>`, `|`, and so on)
+- application of the operator (`[]`, `?[`, `*`, `+`, `()`, `.`, `?.`, `??`, `!`, `and`, `or`, `>>`, `|`, and so on)
 - default value - `default`
 - anonymous function - `rule`
 - array initializer `[...]`
@@ -240,17 +254,24 @@ The numbers in NFun can be written in various ways. Supported
 -0x123    # hexadecimal literal
 0x123_456 # hexadecimal literal with separator
 
-0b123     # binary literal
--0b123    # binary literal
-0b123_456 # binary literal with separator
+0b1010     # binary literal
+-0b1010    # binary literal
+0b1010_0011 # binary literal with separator
 
 123.456  # real literal
 -123.456 # real literal
 
 123_456.7_89 # real literal with separator
+
+2.5e-3     # scientific notation real literal
+1E+10      # uppercase E and explicit positive exponent
+1_000e2_0  # scientific notation with separator
 ```
 
-A real literal always has the `real` type.
+A real literal has the `real` type by default. Under the float-family dialect
+(`FloatFamilySupport.Float32AndFloat64`) a real literal is generic over `[float32..real]`
+and resolves to `float32` in float32 context (`x:float32 = 3.14` works;
+`x + 1.0` stays `float32`); with no float32 context it still resolves to `real`.
 For other numeric literals, the same symbol may have different types depending on the context:
 ```py
 i = 1      # int32 since this type is 'preferred' for integer literals
@@ -262,6 +283,30 @@ m = 1/k
 
 r = 1.5 #real
 ```
+
+### Implicit multiplication
+
+When a numeric literal is immediately followed (without whitespace) by a variable name or `(`, an implicit `*` operator is inserted:
+
+```py
+y = 2x         # equivalent to 2*x
+y = 3(x + 2)   # equivalent to 3*(x + 2)
+y = 0.5x       # equivalent to 0.5*x
+y = 2 x        # error! No space allowed
+y = 2sin(x)    # error! Implicit multiplication before a function call is not allowed
+y = 2(sin(x))  # equivalent to 2*sin(x)
+```
+
+### Expressions: Character literal
+
+Character literals have the **char** type. Syntax: `/` prefix + single character in single quotes
+
+```py
+a = /'a'                         # char
+b = /'\\n'                       # escape sequences same as in text literals
+```
+
+Must contain exactly one character. `/''` and `/'ab'` are errors.
 
 ### Conditional expression `if-else`
 
@@ -302,13 +347,13 @@ result =
 
 Examples:
 ```py
-a = 
+a =
     if(x>0) 'positive'
     if(x<0) 'negative'
     else 'zero'
 
-b = 
-    if(a == 'positive' and flag) 
+b =
+    if(a == 'positive' and flag)
         if(day == 1) 'mon'
         if(day == 2) 'tue'
         if(day == 3) 'wed'
@@ -320,6 +365,61 @@ b =
     else 'some day'
 ```
 
+If one branch is `none` and the other is a value, the result type becomes optional
+
+```py
+c = if(found) 42 else none   # int?
+d = if(flag) none else 'ok'  # text?
+```
+
+### Error expression `oops()`
+
+`oops()` is a built-in function that throws a runtime error. It acts as a bottom type — fits any expression context.
+
+```py
+oops()                    # throw with default message "oops"
+oops('not found')         # throw with custom message
+oops('fail', errorData)   # throw with message and data payload
+```
+
+Common patterns:
+
+```py
+value = x ?? oops('x is missing')          # unwrap-or-throw
+y = if(x > 0) x else oops('must be > 0')   # assertion
+```
+
+`oops()` in dead branches is not evaluated (lazy), same as `if-else` branches.
+
+### Error handling expression `try/catch`
+
+`try/catch` is an expression. It evaluates the try branch; if a runtime error occurs, evaluates the catch branch instead.
+
+```py
+y = try riskyExpr catch fallbackExpr
+```
+
+Type of result = LCA(try branch, catch branch). Catch branch is lazy (not evaluated on success).
+
+```py
+y = try oops('fail') catch 0          # 0
+y = try 42 catch oops('unreachable')  # 42 — catch not evaluated
+```
+
+With error object access:
+
+```py
+y = try oops('bad') catch(e) e.message    # 'bad'
+```
+
+`e` is a struct `{message: text, data: any}`, scoped to the catch expression only.
+
+Nested try/catch:
+
+```py
+y = try (try oops() catch oops('inner')) catch 0    # 0
+```
+
 ### Expressions: Default value `default`
 
 Each type has a default value
@@ -328,6 +428,7 @@ This value is equal to:
 - zero for any numeric type
 - empty array for arrays
 - " (empty text) for `text`
+- `none` for any optional type `T?`
 - new object() for `any`
 - a structure with a 'default' value for each field in the structure type
 - a function that returns the `default` value for an anonymous function
@@ -377,8 +478,8 @@ Where functionName is the function name, and arg1,arg2, argN are the first secon
 ```py
 i = reverse("hello") #'olleh'
 j = max(1,max(2,3)) #3
-k = 'hello'.concat ('world').inverse() #'olle dlrow'
-m = i.union(k) #'olleholle'
+k = 'hello'.concat(' world').reverse() #'dlrow olleh'
+m = i.unite(k) #'olehdrw ' (set union — unique elements from both arrays)
 ```
 
 ### Expressions not described in this document
@@ -390,22 +491,23 @@ The remaining expressions require a more detailed description and are described 
 - Texts
 - Structures
 - Rules (Anonymous functions)
+- Optionals
 
 # User functions
 
 In the body of the script, you can describe the function available for calling in the script
 
 ```py
-functionName(arg1:type1,arg2:type2...argN:type):rtype = expression
+functionName(arg1:type1, arg2:type2)->rtype = expression
 ```
 here
 * **functionName** - the name of the function
 * **arg1,arg2..argN** - 1st,2nd ... n-th names of arguments. Trail comma supported
 * *(optional)* **type1,type2...typeN** - types of the 1st 2nd ... N-th argument
-* *(optional)* **rtype** - function return type
-* **expression** - function expression (body) with local variables arg1,arg2..argN
+* *(optional)* **rtype** - return type (`->` or `:`)
+* **expression** - function body
 
-Only function arguments can be used as variables in the function body. The inputs and outputs of the script are not visible for the function 
+Only function arguments can be used as variables in the function body. The inputs and outputs of the script are not visible for the function
 
 ```py
 sumOf3(a,b,c) = a+b+c
@@ -416,11 +518,69 @@ b = maxOfReal(1,2,3) #3:real
 
 maxOfReal(a,b,c,):real = max(max(a,b),c)
 
-firstPositiveNumber(a:int[]) = if(a. any(rule>0)) a.filter(rule>0)[0] else default
+firstPositiveNumber(a:int[]) = if(a.any(rule it>0)) a.filter(rule it>0)[0] else default
 
 c = [-1,3,0,-4,5].firstPositiveNumber() #3
 
 ```
+
+### Named arguments
+
+Arguments can be passed by name in any order
+
+```py
+f(a,b,c) = a*100 + b*10 + c
+y = f(c=3, a=1, b=2)          # 123
+y = f(1, c=3, b=2)            # 123 — positional then named
+y = 1.f(c=3, b=2)             # 123 — pipe-forward with named
+y = max(b=1, a=5)             # 5   — works for built-in functions too
+y = range(from=1, to=5)       # [1,2,3,4,5]
+```
+
+### Default values
+
+Arguments with `= expr` after the name get a default value. Required args must come before defaults
+
+```py
+f(a, b=10) = a + b
+y = f(5)           # 15  — b uses default
+y = f(5, 20)       # 25  — b overridden
+y = f(a=5)         # 15  — all-named with default
+y = f(5, b=20)     # 25  — mixed
+
+greet(a, b=10, c=20) = a+b+c
+y = greet(1, c=5)  # 16  — skip middle default by name
+```
+
+### Varargs (params)
+
+The `...` prefix collects extra positional args into an array
+
+```py
+f(a, ...rest) = a + rest.sum()
+y = f(10, 1, 2, 3)           # 16
+y = f(10)                     # 10  — empty rest
+y = f(a=10, rest=[1,2,3])    # 16  — named array for rest
+
+g(a, b=0, ...rest) = a+b+rest.sum()
+y = g(1, 2, 3, 4)            # 10  — defaults + params
+```
+
+### Keyword-only arguments (after varargs)
+
+Arguments declared after `...` are keyword-only — they can only be passed by name
+
+```py
+join(...items, sep=' ') = items.map(rule it.toText()).fold('', rule(a,b) = a.concat(sep).concat(b))
+y = join(1, 2, 3)            # ' 1 2 3' — sep uses default
+y = join(1, 2, 3, sep='-')   # '-1-2-3' — sep by name only
+
+f(a, ...rest, verbose=false) = if(verbose) rest.count() else a + rest.sum()
+y = f(1, 2, 3)               # 6       — verbose=false (default)
+y = f(1, 2, 3, verbose=true) # 2       — verbose by name only, rest=[2,3]
+```
+
+Keyword-only args must have defaults (since they can't be filled positionally)
 
 ### Specific and generic user functions
 
@@ -433,7 +593,7 @@ divideBy2(a) = a/2 # the function takes a:real and returns real
 
 multiplyReal(a: real, b) = a*b # the function takes a: real, b: real and returns real
 
-maxOf3(a,b,c):int =max(a,b).max(c) # the function takes a:int, b:int, c:int and returns int
+maxOf3(a,b,c)->int = max(a,b).max(c) # the function takes a:int, b:int, c:int and returns int
 ```
 
 If the function is valid for various types (including with some restrictions on them), such a function is called **generic**.
@@ -461,7 +621,7 @@ b = threeSum(barg1, barg2, barg3)
 Other examples of generic user functions:
 
 ```py
-firstItem(a) = if(a.size()>0) a[0] else default
+firstItem(a) = if(a.count()>0) a[0] else default
 
 t = 'hello'.firstItem() #\'h'
 m = [1,2,3].firstItem() # 1
@@ -482,8 +642,8 @@ a = 42 # a has annotation 'supermega'
 ```
 here 'supermega' - is annotation for output variable 'a'
 
-Annotation name consist of uppercase and lowercase latin letters, numbers, and the _ symbol. 
-The first character must be a latin letter
+Annotation names follow the same rules as variable names (Unicode letters, digits, emoji, `_`).
+The first character must be a letter, emoji, or `_`
 
 For example: `private`, `hidden_id`, `id32`
 

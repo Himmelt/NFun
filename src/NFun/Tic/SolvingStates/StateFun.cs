@@ -1,34 +1,44 @@
-﻿using System;
+﻿namespace NFun.Tic.SolvingStates;
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace NFun.Tic.SolvingStates;
-
 public class StateFun : ICompositeState, ITypeState, ITicNodeState {
     public static StateFun Of(ITicNodeState[] argTypes, ITicNodeState returnType) {
-        TicNode[] argNodes = new TicNode[argTypes.Length];
+        var argNodes = new TicNode[argTypes.Length];
 
-        TicNode retNode = returnType switch {
-                              ITypeState rt     => TicNode.CreateTypeVariableNode(rt),
-                              StateRefTo retRef => retRef.Node,
-                              _                 => throw new InvalidOperationException()
-                          };
+        var retNode = returnType switch {
+            ITypeState rt => TicNode.CreateTypeVariableNode(rt),
+            StateRefTo retRef => retRef.Node,
+            ConstraintsState c => TicNode.CreateInvisibleNode(c),
+            _ => throw new InvalidOperationException($"Fan cannot return state {returnType}")
+        };
 
         for (int i = 0; i < argTypes.Length; i++)
         {
             argNodes[i] = argTypes[i] switch {
                               ITypeState at   => TicNode.CreateTypeVariableNode(at),
                               StateRefTo aRef => aRef.Node,
+                              ConstraintsState c => TicNode.CreateInvisibleNode(c),
                               _               => throw new InvalidOperationException()
                           };
         }
-
-
         return new StateFun(argNodes, retNode);
     }
 
+    public static StateFun Of(ITicNodeState returnType)
+        => Of(Array.Empty<ITicNodeState>(), returnType);
+
     public static StateFun Of(ITicNodeState argType, ITicNodeState returnType)
         => Of(new[] { argType }, returnType);
+
+    public static StateFun Of(ITicNodeState arg1Type, ITicNodeState arg2Type, ITicNodeState retType) =>
+        Of(new[] { arg1Type, arg2Type }, retType);
+
+
+    public static StateFun Of(ITicNodeState arg1Type, ITicNodeState arg2Type, ITicNodeState arg3Type, ITicNodeState retType) =>
+        Of(new[] { arg1Type, arg2Type, arg3Type }, retType);
 
     public static StateFun Of(ITypeState[] argTypes, ITypeState retType) {
         var argNodes = new TicNode[argTypes.Length];
@@ -56,7 +66,15 @@ public class StateFun : ICompositeState, ITypeState, ITicNodeState {
     public IEnumerable<ITicNodeState> Args => ArgNodes.Select(a => a.State);
 
     public int ArgsCount => ArgNodes.Length;
-    public bool IsSolved => RetNode.IsSolved && ArgNodes.All(n => n.IsSolved);
+    public bool IsSolved {
+        get {
+            if (!RetNode.IsSolved) return false;
+            for (int i = 0; i < ArgNodes.Length; i++)
+                if (!ArgNodes[i].IsSolved)
+                    return false;
+            return true;
+        }
+    }
     public bool IsMutable => !IsSolved;
 
     public ITypeState GetLastCommonAncestorOrNull(ITypeState otherType) {
@@ -77,7 +95,7 @@ public class StateFun : ICompositeState, ITypeState, ITicNodeState {
 
         var returnAnc = returnType.GetLastCommonAncestorOrNull(returnTypeB);
 
-        ITypeState[] argTypes = new ITypeState[ArgsCount];
+        var argTypes = new ITypeState[ArgsCount];
 
         for (int i = 0; i < ArgsCount; i++)
         {
@@ -105,8 +123,14 @@ public class StateFun : ICompositeState, ITypeState, ITicNodeState {
         return Of(retType: returnAnc, argTypes: argTypes);
     }
 
-    public bool CanBeImplicitlyConvertedTo(StatePrimitive type)
-        => type.Equals(StatePrimitive.Any);
+    public string PrintState(int depth) {
+        if (depth > 100)
+            return "(...REQ...)->REQ";
+        return $"({string.Join(",", ArgNodes.Select(a => a.State.PrintState(depth+1)))})->{ReturnType.PrintState(depth+1)}";
+    }
+
+    public bool CanBePessimisticConvertedTo(StatePrimitive type)
+        => type== StatePrimitive.Any;
 
     public override bool Equals(object obj) {
         if (obj is not StateFun fun)
@@ -120,7 +144,7 @@ public class StateFun : ICompositeState, ITypeState, ITicNodeState {
             var myArg = ArgNodes[i];
             if (funArg.IsMutable || myArg.IsMutable)
             {
-                if (funArg != myArg)
+                if (!funArg.Equals(myArg))
                     return false;
             }
             else
@@ -158,28 +182,11 @@ public class StateFun : ICompositeState, ITypeState, ITicNodeState {
         }
     }
 
+    public int MemberCount => ArgNodes.Length + 1;
+    public TicNode GetMember(int index) => index < ArgNodes.Length ? ArgNodes[index] : RetNode;
     public IEnumerable<TicNode> Members => ArgNodes.Append(RetNode);
 
-    public IEnumerable<TicNode> AllLeafTypes
-    {
-        get
-        {
-            foreach (var member in Members)
-            {
-                if (member.State is ICompositeState composite)
-                {
-                    foreach (var leaf in composite.AllLeafTypes)
-                    {
-                        yield return leaf;
-                    }
-                }
-                else
-                {
-                    yield return member;
-                }
-            }
-        }
-    }
+    public string StateDescription => PrintState(0);
 
     public override string ToString() {
         if (ArgsCount == 1)
