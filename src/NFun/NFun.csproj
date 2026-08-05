@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -14,7 +14,7 @@
     <Authors>Himmelt</Authors>
     <Company>Himmelt</Company>
     <Description>.NET 表达式求值器</Description>
-    <Copyright>Copyright (c) 2025</Copyright>
+    <Copyright>Copyright (c) 2025-2026 Himmelt</Copyright>
     <PackageProjectUrl>https://github.com/Himmelt/NFun</PackageProjectUrl>
     <RepositoryUrl>https://github.com/Himmelt/NFun.git</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

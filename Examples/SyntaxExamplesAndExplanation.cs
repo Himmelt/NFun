@@ -462,7 +462,7 @@ public class SyntaxExamplesAndExplanation {
 
         //text is an array of characters and all operations with arrays are applicable to texts
         Funny.Hardcore.Build("x:text; y = x.reverse()"); //will expand the input text
-        Assert.AreEqual("ttt", Funny.Calc("'string constant'.filter(rule it == 't')"));
+        Assert.AreEqual("ttt", Funny.Calc("'string constant'.filter(rule it == /'t')"));
 
         //special text functions  
         //join
