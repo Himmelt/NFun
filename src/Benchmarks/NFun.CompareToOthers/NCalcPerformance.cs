@@ -1,5 +1,6 @@
 using System;
 using NCalc;
+using NCalc.LambdaCompilation;
 
 namespace NFun.CompareToOthers; 
 
@@ -67,8 +68,7 @@ public class NCalcPerformance {
         expression.EvaluateFunction += (name, args) => {
             if (name == "Foo")
             {
-                var param = args.EvaluateParameters();
-                args.Result = calculator.Foo((int)param[0], (int)param[1]);
+                args.Result = calculator.Foo((int)args.Parameters.Evaluate(0), (int)args.Parameters.Evaluate(1));
             }
         };
 

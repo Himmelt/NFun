@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using IronPython.Hosting;
 using NCalc;
+using NCalc.LambdaCompilation;
 
 namespace NFun.CompareToOthers;
 

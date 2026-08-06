@@ -157,7 +157,7 @@ public class Toposort2Test {
         var theNode = algorithm.NonReferenceOrdered[0];
         Assert.IsInstanceOf<ConstraintsState>(theNode.State);
         Assert.AreEqual(ConstraintsState.Of(I32, Real), theNode.State);
-        CollectionAssert.AreEquivalent(ancestors, theNode.Ancestors);
+        Assert.That(theNode.Ancestors, Is.EquivalentTo(ancestors));
     }
 
 
@@ -287,7 +287,7 @@ public class Toposort2Test {
         algorithm.AddToTopology(n2);
         algorithm.AddToTopology(n3);
         algorithm.OptimizeTopology();
-        CollectionAssert.AreEqual(new[] { n2, n1, n3 }, algorithm.NonReferenceOrdered);
+        Assert.That(algorithm.NonReferenceOrdered, Is.EqualTo(new[] { n2, n1, n3 }));
     }
 
     [Test]

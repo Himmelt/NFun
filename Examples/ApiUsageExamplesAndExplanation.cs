@@ -37,10 +37,10 @@ public class ApiUsageExamples {
         Assert.AreEqual("pu s'tahw", s);
         // With arrays:
         int[] arr1 = Funny.Calc<int[]>("[1,2,3].reverse()");
-        CollectionAssert.AreEquivalent(new[] { 3, 2, 1 }, arr1);
+        Assert.That(arr1, Is.EquivalentTo(new[] { 3, 2, 1 }));
         // With arrays of strings:
         string[] arr2 = Funny.Calc<string[]>("[1,2,3].map(rule 'item {it}')");
-        CollectionAssert.AreEquivalent(new[] { "item 1", "item 2", "item 3" }, arr2);
+        Assert.That(arr2, Is.EquivalentTo(new[] { "item 1", "item 2", "item 3" }));
         // And even complex models
         User user = Funny.Calc<User>("{id = 112, age = 42, name = 'peter'.toUpper(), cars = []}");
         Assert.AreEqual(112, user.Id);

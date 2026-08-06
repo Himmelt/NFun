@@ -1,7 +1,17 @@
+<div align="center">
+
 # NFun .NET 表达式求值器
 
+[![CI](https://github.com/Himmelt/NFun/actions/workflows/ci.yml/badge.svg)](https://github.com/Himmelt/NFun/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/Himmelt.NFun?color=004880&logo=nuget)](https://www.nuget.org/packages/Himmelt.NFun)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/Himmelt.NFun?color=004880&logo=nuget)](https://www.nuget.org/packages/Himmelt.NFun)
+[![.NET](https://img.shields.io/badge/.NET-8%20%7C%209%20%7C%2010-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com)
+[![License](https://img.shields.io/github/license/Himmelt/NFun?color=green)](LICENSE)
+
+</div>
+
 ## 关于
-本项目Fork自[tmteam/NFun](https://github.com/tmteam/NFun)，并对其进行了一些修改。
+本项目Fork自 [tmteam/NFun](https://github.com/tmteam/NFun) 并对其进行了一些修改。
 主要添加功能为，扩展`WithFunction`方法，支持`Delegate`委托类型的函数。
 
 ## 安装

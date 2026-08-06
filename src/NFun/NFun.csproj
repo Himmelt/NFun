@@ -30,8 +30,7 @@
 
   <ItemGroup>
     <None Remove="NFun.nuspec" />
-    <PackageReference Include="IndexRange" Version="1.0.2" />
-    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="IndexRange" Version="1.1.1" />
     <None Update="Functions\GenericSwitchFunctionsGenerated.tt">
       <Generator>TextTemplatingFileGenerator</Generator>
       <LastGenOutput>GenericSwitchFunctionsGenerated.cs</LastGenOutput>

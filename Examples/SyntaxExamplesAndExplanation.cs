@@ -152,7 +152,7 @@ public class SyntaxExamplesAndExplanation {
         Assert.AreEqual(FunnyType.ArrayOf(FunnyType.Int32), r2["out"].Type);
 
         var result = Funny.Calc("['1','2','Hi']");
-        CollectionAssert.AreEqual(new[] { "1", "2", "Hi" }, result as string[]);
+        Assert.That(result as string[], Is.EqualTo(new[] { "1", "2", "Hi" }));
 
         // But if you really want to, you can specify the types explicitly
         var r3 = Funny.Hardcore.Build(
@@ -433,16 +433,14 @@ public class SyntaxExamplesAndExplanation {
         y = [].any() # false        
         y = 1.repeat(3) # [1,1,1]
          */
-        CollectionAssert.AreEquivalent(
-            new[] { 1, 3, 5 }, Funny.Calc<int[]>("[0..10][1:5:2]"));
+        Assert.That(Funny.Calc<int[]>("[0..10][1:5:2]"),
+            Is.EquivalentTo(new[] { 1, 3, 5 }));
 
         Assert.IsFalse(Funny.Calc<bool>("[].any()"));
-        CollectionAssert.AreEquivalent(
-            new[] { 1.0, 1.5, 2.0, 2.5 },
-            Funny.Calc<double[]>("[1..2.5 step 0.5]"));
-        CollectionAssert.AreEquivalent(
-            new[] { "fo", "ba", "fo", "ba", "fo", "ba" },
-            Funny.Calc<string[]>("['fo','ba'].repeat(3).flat()"));
+        Assert.That(Funny.Calc<double[]>("[1..2.5 step 0.5]"),
+            Is.EquivalentTo(new[] { 1.0, 1.5, 2.0, 2.5 }));
+        Assert.That(Funny.Calc<string[]>("['fo','ba'].repeat(3).flat()"),
+            Is.EquivalentTo(new[] { "fo", "ba", "fo", "ba", "fo", "ba" }));
     }
 
     [Test]
@@ -468,9 +466,8 @@ public class SyntaxExamplesAndExplanation {
         //join
         Assert.AreEqual("one, two, three", Funny.Calc("['one', 'two', 'three'].join(', ')"));
         //split
-        CollectionAssert.AreEquivalent(
-            new[] { "1", "2", "3" },
-            Funny.Calc<string[]>("'1,2,3'.split(',')"));
+        Assert.That(Funny.Calc<string[]>("'1,2,3'.split(',')"),
+            Is.EquivalentTo(new[] { "1", "2", "3" }));
         //trim XXX
         Assert.AreEqual("hey", Funny.Calc("' hey '.trim()"));
         Assert.AreEqual("hey ", Funny.Calc("' hey '.trimStart()"));

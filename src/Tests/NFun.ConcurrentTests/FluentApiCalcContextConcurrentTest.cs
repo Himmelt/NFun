@@ -45,7 +45,7 @@ public class FluentApiCalcContextConcurrentTest {
             new[] { new UserInputModel(name: "kate", age: 33, size: 15.5) });
         var expected = (ContextModel2)origin.Clone();
         expected.Price = origin.Inputs.Max() + origin.Users[0].Size;
-        expected.Results = origin.Inputs.Reverse().Select(r => r.ToString()).ToArray();
+        expected.Results = origin.Inputs.Select(r => r.ToString()).Reverse().ToArray();
         expected.Contracts = new[] {
             new ContractOutputModel { Id = 1, Items = new[] { "single" }, Price = 456, Taxes = 789 }
         };

@@ -128,11 +128,11 @@ class TrickyPrimitives {
 
         var yRes = result.GetVariableNode("y").GetNonReference();
         var y2Res = result.GetVariableNode("y2").GetNonReference();
-        CollectionAssert.AreEquivalent(generics, new[] { y2Res, yRes });
+        Assert.That(new[] { y2Res, yRes }, Is.EquivalentTo(generics));
 
         var xRes = result.GetVariableNode("x").GetNonReference();
         var x2Res = result.GetVariableNode("x2").GetNonReference();
-        CollectionAssert.AreEquivalent(generics, new[] { x2Res, xRes });
+        Assert.That(new[] { x2Res, xRes }, Is.EquivalentTo(generics));
     }
 
     [Test]
