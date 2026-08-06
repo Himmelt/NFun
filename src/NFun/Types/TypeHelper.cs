@@ -20,7 +20,21 @@ internal static class TypeHelper {
         obj switch {
             IFunnyArray funArray => funArray.ToText(),
             bool b               => b ? "true" : "false",
-            double dbl           => dbl.ToString(CultureInfo.InvariantCulture),
+            double dbl           => dbl switch {
+                double.PositiveInfinity => "∞",
+                double.NegativeInfinity => "-∞",
+                double.NaN              => "NaN",
+                _                       => dbl.ToString(CultureInfo.InvariantCulture)
+            },
+            // NFun text output for float32 uses the same ∞/-∞/NaN symbols as real.
+            // float.ToString() is platform-dependent ("∞" on Windows vs "Infinity"
+            // on Linux), so infinity/NaN are normalized explicitly.
+            float f                => f switch {
+                float.PositiveInfinity => "∞",
+                float.NegativeInfinity => "-∞",
+                float.NaN              => "NaN",
+                _                      => f.ToString(CultureInfo.InvariantCulture)
+            },
             Decimal dec          => dec.ToString(CultureInfo.InvariantCulture),
             _                    => obj.ToString()
         };

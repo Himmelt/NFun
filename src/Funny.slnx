@@ -1,0 +1,22 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/Benchmarks/">
+    <Project Path="Benchmarks/NFun.Benchmarks/NFun.Benchmarks.csproj" />
+    <Project Path="Benchmarks/NFun.CompareToOthers/NFun.CompareToOthers.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/NFun.ApiTests/NFun.ApiTests.csproj" />
+    <Project Path="Tests/NFun.ConcurrentTests/NFun.ConcurrentTests.csproj" />
+    <Project Path="Tests/NFun.SyntaxTests/NFun.SyntaxTests.csproj" />
+    <Project Path="Tests/NFun.TestTools/NFun.TestTools.csproj" />
+    <Project Path="Tests/NFun.Tic.Tests/NFun.Tic.Tests.csproj" />
+    <Project Path="Tests/Nfun.UnitTests/NFun.UnitTests.csproj" />
+  </Folder>
+  <Project Path="../Examples/Examples.csproj" />
+  <Project Path="ConsoleAppExample/ConsoleAppExample.csproj" />
+  <Project Path="NFun/NFun.csproj" />
+</Solution>

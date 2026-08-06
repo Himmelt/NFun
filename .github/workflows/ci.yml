@@ -19,11 +19,11 @@ jobs:
             9.0.x
             10.0.x
       - name: Restore
-        run: dotnet restore src/Funny.sln
+        run: dotnet restore src/Funny.slnx
       - name: Build
-        run: dotnet build src/Funny.sln -c Release --no-restore
+        run: dotnet build src/Funny.slnx -c Release --no-restore
       - name: Test
-        run: dotnet test src/Funny.sln -c Release --no-build
+        run: dotnet test src/Funny.slnx -c Release --no-build
       - name: Pack
         run: dotnet pack src/NFun/NFun.csproj -c Release -o artifacts
       - name: Upload NuGet packages

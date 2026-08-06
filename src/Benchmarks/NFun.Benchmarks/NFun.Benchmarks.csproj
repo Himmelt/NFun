@@ -3,6 +3,12 @@
     <PropertyGroup>
 
         <IsPackable>false</IsPackable>
+        <IsTestProject>false</IsTestProject>
+        <!-- Microsoft.NET.Test.Sdk 18.x pulls in Microsoft.Testing.Platform, whose
+             targets re-add the TestContainer capability after this file's body is
+             evaluated. Disable the testing platform so the Remove below takes effect
+             and Visual Studio stops treating this benchmark project as a test project. -->
+        <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
 
         <RootNamespace>Nfun.Benchmarks</RootNamespace>
 
@@ -21,6 +27,12 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\NFun\NFun.csproj" />
+    </ItemGroup>
+
+    <!-- Prevent Visual Studio from treating this benchmark project as a test
+         container; VS checks TestContainer capability in addition to IsTestProject. -->
+    <ItemGroup>
+        <ProjectCapability Remove="TestContainer" />
     </ItemGroup>
 
     <ItemGroup>
