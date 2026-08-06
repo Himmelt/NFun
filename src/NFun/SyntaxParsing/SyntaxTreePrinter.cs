@@ -17,7 +17,9 @@ public class SyntaxTreePrinter {
     }
 
     private void PrintReq(ISyntaxNode node) {
-        _sb.AppendLine(new string(' ', __indent * 3) +   node.Accept(SyntaxNodePrinterVisitor.Instance));
+        // Use a literal '\n' instead of Environment.NewLine so the output is
+        // identical on all platforms (tests expect LF regardless of OS).
+        _sb.Append(new string(' ', __indent * 3) + node.Accept(SyntaxNodePrinterVisitor.Instance)).Append('\n');
         __indent++;
         foreach (var child in node.Children)
             PrintReq(child);
